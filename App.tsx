@@ -229,12 +229,16 @@ const App: React.FC = () => {
 
   const handleSaveInvoice = async (invoice: Invoice) => {
     try {
-      // Save invoice document
-      await setDoc(doc(db, 'invoices', invoice.id), invoice);
-
-      // After successful save, increment next invoice number in settings
+      // Save invoice document and update next invoice number in parallel
       const nextNo = (settings.nextInvoiceNumber || 0) + 1;
-      await handleUpdateSettings({ ...settings, nextInvoiceNumber: nextNo });
+      
+      await Promise.all([
+        setDoc(doc(db, 'invoices', invoice.id), invoice),
+        updateDoc(doc(db, 'settings', 'general'), { nextInvoiceNumber: nextNo })
+      ]);
+
+      // Update local state optimistically
+      setSettings(prev => ({ ...prev, nextInvoiceNumber: nextNo }));
     } catch (e) {
       console.error("Error saving invoice: ", e);
       alert("Failed to save invoice to database.");
