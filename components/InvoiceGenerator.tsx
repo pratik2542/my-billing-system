@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Minus, Trash2, Printer, Share2, Save, Send, Eye, FilePlus, Download, Loader2 } from 'lucide-react';
+import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2 } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
 import { Product, Customer, InvoiceItem, BusinessSettings, Invoice } from '../types';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 
 interface InvoiceGeneratorProps {
   products: Product[];
@@ -34,7 +32,6 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [qty, setQty] = useState<number>(1);
   const [customRate, setCustomRate] = useState<string>(''); // Custom rate input
   const [showPreviewMobile, setShowPreviewMobile] = useState(false); // Mobile tab state
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -279,168 +276,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     });
   };
 
-  const getInvoiceFile = async (): Promise<File | null> => {
-    const element = document.getElementById('invoice-capture-hidden');
-    if (!element) return null;
 
-    // Capture the current scroll position to restore it later
-    const scrollX = window.scrollX;
-    const scrollY = window.scrollY;
-
-    // Scroll to top-left to avoid html2canvas coordinate offset issues
-    window.scrollTo(0, 0);
-
-    // Create a clean, isolated container for capture
-    const captureContainer = document.createElement('div');
-    captureContainer.id = 'pdf-capture-container';
-    captureContainer.style.position = 'absolute';
-    captureContainer.style.left = '0';
-    captureContainer.style.top = '0';
-    captureContainer.style.width = '794px';
-    captureContainer.style.height = '1123px';
-    captureContainer.style.background = 'white';
-    captureContainer.style.zIndex = '10000';
-    captureContainer.style.margin = '0';
-    captureContainer.style.padding = '0';
-    document.body.appendChild(captureContainer);
-
-    // Clone the hidden capture element - ENSURE IT IS THE ONLY CHILD
-    const clone = element.cloneNode(true) as HTMLElement;
-    clone.style.transform = 'none';
-    clone.style.margin = '0';
-    clone.style.padding = '0';
-    clone.style.width = '794px';
-    clone.style.height = '1123px';
-    clone.style.display = 'block';
-    clone.style.visibility = 'visible';
-    clone.style.position = 'relative';
-    clone.style.top = '0';
-    clone.style.left = '0';
-    captureContainer.appendChild(clone);
-
-    setIsGeneratingPdf(true);
-    try {
-      // Small delay for rendering stabilization
-      await new Promise(r => setTimeout(r, 500));
-
-      const canvas = await html2canvas(clone, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        width: 794,
-        height: 1123,
-        scrollX: 0,
-        scrollY: 0,
-        x: 0,
-        y: 0
-      });
-
-      // Cleanup
-      document.body.removeChild(captureContainer);
-      window.scrollTo(scrollX, scrollY);
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
-
-      const fileName = `Invoice_${billNo}_${customerName.replace(/[^a-z0-9]/gi, '_')}.pdf`;
-      const pdfBlob = pdf.output('blob');
-      return new File([pdfBlob], fileName, { type: 'application/pdf' });
-    } catch (error) {
-      console.error("PDF Generation failed", error);
-      if (document.body.contains(captureContainer)) {
-        document.body.removeChild(captureContainer);
-      }
-      window.scrollTo(scrollX, scrollY);
-      return null;
-    } finally {
-      setIsGeneratingPdf(false);
-    }
-  };
-
-  const generatePDF = async () => {
-    const file = await getInvoiceFile();
-    if (!file) return false;
-
-    const fileURL = URL.createObjectURL(file);
-    const link = document.createElement('a');
-    link.href = fileURL;
-    link.download = file.name;
-    link.click();
-    return true;
-  };
-
-  const handleShareWhatsApp = async () => {
-    if (items.length === 0) return;
-
-    const file = await getInvoiceFile();
-    if (!file) return;
-
-    // 1. Try Native Sharing (Best for Mobile)
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: `Invoice ${billNo}`,
-          text: `Invoice No: ${billNo} from ${settings.name}`,
-        });
-        return;
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') console.error(err);
-      }
-    }
-
-    // 2. Fallback for Desktop (Manual)
-    const url = URL.createObjectURL(file);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = file.name;
-    link.click();
-
-    const itemsList = items.map(i => `${i.name}${i.packing ? `(${i.packing})` : ''}: ${i.quantity}${i.unit} x ${i.rate} = ${i.amount}`).join('%0a');
-    const text = `*INVOICE No: ${billNo}*%0aDate: ${date}%0aCustomer: ${customerName}%0a%0a*Items:*%0a${itemsList}%0a%0a*TOTAL: ₹${grandTotal}*`;
-
-    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
-    alert("IMPORTANT: WhatsApp Web doesn't allow auto-attaching files.\n\n1. The PDF is now downloaded.\n2. We've opened WhatsApp.\n3. Please drag the downloaded PDF into the chat manually.");
-  };
-
-  const handleShareEmail = async () => {
-    if (items.length === 0) return;
-
-    const file = await getInvoiceFile();
-    if (!file) return;
-
-    // 1. Try Native Sharing (Direct attachment on mobile)
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          // On mobile email apps, sometimes providing less text helps the app focus on the attachment
-          title: `Invoice ${billNo}`,
-        });
-        return;
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') console.error(err);
-      }
-    }
-
-    // 2. Desktop Fallback
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(file);
-    link.download = file.name;
-    link.click();
-
-    const subject = `Invoice ${billNo} from ${settings.name}`;
-    const body = `Dear ${customerName},\n\nPlease find the invoice details below:\n\nTotal Amount: ₹${grandTotal}\n\nI have attached the PDF invoice to this email.\n\nThank you.`;
-
-    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    alert("The PDF has been downloaded. Please attach it to your email manually.");
-  };
 
   return (
     <div className="flex flex-col lg:flex-row h-full gap-4 lg:gap-4 relative overflow-hidden">
@@ -700,29 +536,6 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             className="flex items-center justify-center gap-2 bg-red-600 text-white p-3 rounded hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
           >
             <Printer className="w-4 h-4" /> Print
-          </button>
-          <button
-            onClick={generatePDF}
-            disabled={isGeneratingPdf || !isSaved || isSaving}
-            className="flex items-center justify-center gap-2 bg-slate-700 text-white p-3 rounded hover:bg-slate-600 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
-          >
-            {isGeneratingPdf ? <span className="animate-spin">⌛</span> : <Download className="w-4 h-4" />} PDF
-          </button>
-          <button
-            onClick={handleShareWhatsApp}
-            disabled={isGeneratingPdf || !isSaved || isSaving}
-            className="flex items-center justify-center gap-2 bg-green-600 text-white p-3 rounded hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
-            title="Share PDF via WhatsApp"
-          >
-            <Send className="w-4 h-4" /> WhatsApp
-          </button>
-          <button
-            onClick={handleShareEmail}
-            disabled={isGeneratingPdf || !isSaved || isSaving}
-            className="flex items-center justify-center gap-2 bg-blue-600 text-white p-3 rounded hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
-            title="Share PDF via Email"
-          >
-            <Share2 className="w-4 h-4" /> Email
           </button>
 
           {isSaved && (

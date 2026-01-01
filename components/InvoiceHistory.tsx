@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Invoice, BusinessSettings } from '../types';
-import { Search, Eye, X, Printer, FileDown, Send, Share2, Download } from 'lucide-react';
+import { Search, Eye, X, Printer, Download } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
 
 interface InvoiceHistoryProps {
@@ -154,44 +154,29 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
     });
   };
 
-  const generatePDF = () => {
-    if (!viewingInvoice) return;
-    handlePrint();
-  };
 
-  const handleShareWhatsApp = () => {
-    if (!viewingInvoice) return;
-
-    const itemsList = viewingInvoice.items.map(i => `${i.name}${i.packing ? ` (${i.packing})` : ''}: ${i.quantity}${i.unit} x ₹${i.rate} = ₹${i.amount}`).join('%0a');
-    const text = `*INVOICE No: ${viewingInvoice.id}*%0aDate: ${viewingInvoice.date}%0aCustomer: ${viewingInvoice.customerName}%0a%0a*Items:*%0a${itemsList}%0a%0a*TOTAL: ₹${viewingInvoice.total}*`;
-
-    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
-    alert("To share the PDF:\n1. Click 'Save as PDF' button to print/save the invoice\n2. Then manually attach it to your WhatsApp message");
-  };
-
-  const handleShareEmail = () => {
-    if (!viewingInvoice) return;
-
-    const subject = `Invoice ${viewingInvoice.id} from ${settings.name}`;
-    const body = `Dear ${viewingInvoice.customerName},\n\nPlease find the invoice details below:\n\nInvoice No: ${viewingInvoice.id}\nDate: ${viewingInvoice.date}\nTotal Amount: ₹${viewingInvoice.total}\n\nPlease use 'Save as PDF' button to print/save the invoice, then attach it to this email.\n\nThank you.`;
-
-    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  };
 
   const handleExportCSV = () => {
     if (filteredInvoices.length === 0) return;
 
-    const headers = ['Bill No', 'Date', 'Customer Name', 'City', 'Items Count', 'Total Amount'];
+    const headers = ['Bill No', 'Date', 'Customer Name', 'City', 'Items', 'Total Amount'];
     const csvContent = [
       headers.join(','),
-      ...filteredInvoices.map(inv => [
-        inv.id,
-        inv.date,
-        `"${inv.customerName.replace(/"/g, '""')}"`, // Escape quotes
-        `"${inv.customerCity.replace(/"/g, '""')}"`,
-        inv.items.length,
-        inv.total
-      ].join(','))
+      ...filteredInvoices.map(inv => {
+        // Format items as "ProductName (quantity packets), ProductName2 (quantity packets)"
+        const itemsString = inv.items.map(item => 
+          `${item.name}${item.packing ? ` ${item.packing}` : ''} (${item.quantity} ${item.unit})`
+        ).join(', ');
+        
+        return [
+          inv.id,
+          inv.date,
+          `"${inv.customerName.replace(/"/g, '""')}"`, // Escape quotes
+          `"${inv.customerCity.replace(/"/g, '""')}"`,
+          `"${itemsString.replace(/"/g, '""')}"`, // Escape quotes in items
+          inv.total
+        ].join(',');
+      })
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -410,28 +395,6 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                   <h3 className="font-bold text-sm md:text-lg">#{viewingInvoice.id}</h3>
                 </div>
                 <div className="flex flex-wrap gap-2 md:gap-3">
-                  <button
-                    onClick={generatePDF}
-                    className="flex items-center gap-1 md:gap-2 bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
-                    title="Save as PDF or Print"
-                  >
-                    <FileDown size={14} className="md:w-4 md:h-4" />
-                    <span>Save as PDF</span>
-                  </button>
-                  <button
-                    onClick={handleShareWhatsApp}
-                    className="flex items-center gap-1 md:gap-2 bg-green-600 hover:bg-green-700 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
-                  >
-                    <Send size={14} className="md:w-4 md:h-4" />
-                    <span className="hidden sm:inline">WhatsApp</span>
-                  </button>
-                  <button
-                    onClick={handleShareEmail}
-                    className="flex items-center gap-1 md:gap-2 bg-blue-500 hover:bg-blue-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
-                  >
-                    <Share2 size={14} className="md:w-4 md:h-4" />
-                    <span className="hidden sm:inline">Email</span>
-                  </button>
                   <button
                     onClick={handlePrint}
                     className="flex items-center gap-1 md:gap-2 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-slate-600"
