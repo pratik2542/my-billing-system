@@ -148,6 +148,53 @@ const App: React.FC = () => {
     };
   }, [user]);
 
+  // --- Update Document Title and Favicon ---
+  useEffect(() => {
+    if (!user) {
+      document.title = 'Billing System - Login';
+      return;
+    }
+
+    // Update document title with business name
+    document.title = `${settings.name || 'My Business'} - Billing System`;
+
+    // Update favicon
+    let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+
+    if (settings.logoUrl) {
+      // Use business logo as favicon
+      link.href = settings.logoUrl;
+    } else {
+      // Generate favicon from logo initial and theme color
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      
+      if (ctx) {
+        // Background circle with theme color
+        ctx.fillStyle = settings.themeColor || '#dc2626';
+        ctx.beginPath();
+        ctx.arc(32, 32, 30, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // White text with logo initial
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 36px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(settings.logoInitial || 'B', 32, 32);
+
+        link.href = canvas.toDataURL();
+      }
+    }
+  }, [user, settings.name, settings.logoUrl, settings.logoInitial, settings.themeColor]);
+
   // --- Navigation Guard ---
   const handleTabChange = (tab: AppTab) => {
     if (activeTab === AppTab.CREATE_BILL && hasUnsavedChanges && tab !== AppTab.CREATE_BILL) {
@@ -407,6 +454,82 @@ const App: React.FC = () => {
       alert('Failed to save logo. Please try again.');
     } finally {
       setIsSavingLogo(false);
+    }
+  };
+
+  // --- Signature Handlers ---
+  const [pendingSignature, setPendingSignature] = useState<string | null>(null);
+  const [isSavingSignature, setIsSavingSignature] = useState(false);
+
+  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const maxSize = 2 * 1024 * 1024; // 2MB
+      if (file.size > maxSize) {
+        alert(`File size must be less than 2MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        const sizeInBytes = file.size;
+        const oneMB = 1024 * 1024;
+
+        if (sizeInBytes > oneMB && sizeInBytes <= maxSize) {
+          const img = new Image();
+          img.src = result;
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            const scaleFactor = 0.7;
+            canvas.width = img.width * scaleFactor;
+            canvas.height = img.height * scaleFactor;
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            const compressedSize = compressedDataUrl.length * 0.75;
+
+            if (compressedSize > oneMB) {
+              alert("Image is too complex to compress under 1MB. Please try a smaller image.");
+              return;
+            }
+            setPendingSignature(compressedDataUrl);
+          };
+        } else {
+          setPendingSignature(result);
+        }
+      };
+      reader.onerror = () => {
+        alert("Error reading file. Please try again.");
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeSignature = () => {
+    if (pendingSignature) {
+      setPendingSignature(null);
+      return;
+    }
+    if (!window.confirm('Remove saved signature?')) return;
+    setPendingSignature(null);
+    handleUpdateSettings({ ...settings, signatureUrl: '' });
+  };
+
+  const savePendingSignature = async () => {
+    if (!pendingSignature) return;
+    setIsSavingSignature(true);
+    try {
+      await handleUpdateSettings({ ...settings, signatureUrl: pendingSignature });
+      setPendingSignature(null);
+    } catch (e) {
+      console.error('Error saving signature:', e);
+      alert('Failed to save signature. Please try again.');
+    } finally {
+      setIsSavingSignature(false);
     }
   };
 
@@ -1036,46 +1159,44 @@ const App: React.FC = () => {
                               {(pendingLogoWidth !== null && pendingLogoWidth !== (settings.logoWidth || 80)) && (
                                 <button
                                   onClick={async () => {
+                                    const sizeToSave = pendingLogoWidth;
                                     setIsSavingSize(true);
                                     try {
-                                      await handleUpdateSettings({ ...settings, logoWidth: pendingLogoWidth });
-                                      setPendingLogoWidth(null);
+                                      await handleUpdateSettings({ ...settings, logoWidth: sizeToSave });
                                     } catch (e) {
                                       console.error('Error saving logo size:', e);
                                       alert('Failed to save logo size.');
                                     } finally {
                                       setIsSavingSize(false);
+                                      setPendingLogoWidth(null);
                                     }
                                   }}
                                   disabled={isSavingSize}
-                                  className="bg-blue-600 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2 px-4 rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all"
+                                  className="bg-blue-600 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2 px-4 rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all min-w-[110px]"
                                 >
-                                  {isSavingSize ? <Loader2 className="animate-spin w-4 h-4" /> : <Save size={16} />}
-                                  <span>Save Size</span>
+                                  {isSavingSize ? <><Loader2 className="animate-spin w-4 h-4" /><span>Saving...</span></> : <><Save size={16} /><span>Save Size</span></>}
                                 </button>
                               )}
                             </div>
                           </div>
 
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 text-center">Live Digital Header Preview</div>
-                          <div className="overflow-x-auto border border-slate-200 bg-white shadow-lg rounded-xl">
-                            <div className="min-w-[800px] p-10 font-serif-custom text-center relative" style={{ color: settings.themeColor || '#dc2626' }}>
-                              <div className="border-b-4 pb-6 relative" style={{ borderColor: settings.themeColor || '#dc2626' }}>
-                                <img
-                                  src={pendingLogo || settings.logoUrl}
-                                  alt="Logo"
-                                  className="absolute left-6 top-0 bottom-6 object-contain my-auto"
-                                  style={{ width: `${pendingLogoWidth ?? (settings.logoWidth || 80)}px`, maxHeight: '140px' }}
-                                />
-                                <div className="mt-2">
-                                  <h1 className="text-6xl font-bold tracking-tighter mb-1" style={{ color: settings.themeColor || '#dc2626' }}>{settings.name}</h1>
-                                  <h2 className="text-3xl font-bold opacity-90" style={{ color: settings.themeColor || '#dc2626' }}>{settings.subName}</h2>
-                                  <p className="mt-2 text-base font-medium" style={{ color: settings.themeColor || '#dc2626' }}>{settings.address} • M.: {settings.mobile}</p>
-                                </div>
+                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 text-center">Live Header Preview (Actual Size)</div>
+                          <div className="overflow-x-auto no-scrollbar border-2 bg-white shadow-lg rounded-xl" style={{ borderColor: settings.themeColor || '#dc2626' }}>
+                            <div className="min-w-[794px] border-b-2 p-4 font-serif-custom text-center relative" style={{ color: settings.themeColor || '#dc2626', borderColor: settings.themeColor || '#dc2626' }}>
+                              <img
+                                src={pendingLogo || settings.logoUrl}
+                                alt="Logo"
+                                className="absolute left-4 top-4 object-contain"
+                                style={{ width: `${pendingLogoWidth ?? (settings.logoWidth || 80)}px`, maxHeight: '120px' }}
+                              />
+                              <div className="mt-2">
+                                <h1 className="text-5xl font-bold tracking-wider mb-1" style={{ color: settings.themeColor || '#dc2626' }}>{settings.name}</h1>
+                                <h2 className="text-2xl font-bold" style={{ color: settings.themeColor || '#dc2626' }}>{settings.subName}</h2>
+                                <p className="mt-1 text-sm" style={{ color: settings.themeColor || '#dc2626' }}>{settings.address} M.: {settings.mobile}</p>
                               </div>
                             </div>
                           </div>
-                          <p className="text-center text-slate-400 text-[10px] mt-4 font-medium italic">This preview reflects how your business information will appear at the top of printed bills.</p>
+                          <p className="text-center text-slate-400 text-[10px] mt-4 font-medium italic">This preview matches exactly how your logo will appear on printed invoices (794px width, A4 size).</p>
                         </div>
                       )}
                     </div>
@@ -1123,6 +1244,65 @@ const App: React.FC = () => {
                       maxLength={1}
                       className="w-16 p-2 border border-slate-300 rounded text-center"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-600 mb-1">Signature Name (Optional)</label>
+                    <input
+                      value={settings.signatureName || ''}
+                      onChange={e => handleUpdateSettings({ ...settings, signatureName: e.target.value })}
+                      placeholder="e.g., S.J.B.G.U (defaults to Business Name if empty)"
+                      className="w-full p-2 border border-slate-300 rounded"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">This will appear as "For, [Signature Name]" at the bottom of the invoice. Leave empty to use Business Name.</p>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-lg border border-slate-200">
+                    <label className="block text-sm font-bold text-slate-600 mb-3">Signature Image (Optional)</label>
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-wrap gap-3 items-center">
+                        <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-2.5 px-5 rounded-lg flex items-center gap-2 text-sm w-full md:w-auto justify-center transition-all shadow-sm">
+                          <Upload size={18} />
+                          <span className="font-bold">Upload Signature</span>
+                          <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={handleSignatureUpload} className="hidden" />
+                        </label>
+
+                        {(settings.signatureUrl || pendingSignature) && (
+                          <div className="flex items-center gap-3 w-full md:w-auto">
+                            <button
+                              onClick={() => { if (pendingSignature) { setPendingSignature(null); } else { removeSignature(); } }}
+                              className="flex-1 md:flex-initial text-red-600 hover:text-white hover:bg-red-600 p-2.5 border border-red-200 rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-bold"
+                            >
+                              <X size={18} />
+                              <span>Remove</span>
+                            </button>
+
+                            {pendingSignature && (
+                              <button
+                                onClick={savePendingSignature}
+                                disabled={isSavingSignature}
+                                className="flex-1 md:flex-initial bg-green-600 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2.5 px-5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all"
+                              >
+                                {isSavingSignature ? <Loader2 className="animate-spin w-4 h-4" /> : <Save size={18} />}
+                                <span>Save</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {(pendingSignature || settings.signatureUrl) && (
+                        <div className="mt-2 p-3 bg-slate-50 rounded border border-slate-200">
+                          <p className="text-xs font-bold text-slate-500 mb-2">Preview:</p>
+                          <img
+                            src={pendingSignature || settings.signatureUrl}
+                            alt="Signature"
+                            className="max-h-20 object-contain bg-white p-2 border border-slate-200 rounded"
+                          />
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-500">Upload a transparent PNG signature for best results. Max 2MB.</p>
+                    </div>
                   </div>
 
                   <div className="border-t border-slate-100 my-4"></div>

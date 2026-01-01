@@ -1,9 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Invoice, BusinessSettings } from '../types';
-import { Search, Eye, X, Printer, Download, Send, Share2, Loader2 } from 'lucide-react';
+import { Search, Eye, X, Printer, FileDown, Send, Share2, Download } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 
 interface InvoiceHistoryProps {
   invoices: Invoice[];
@@ -16,7 +14,6 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
   const [endDate, setEndDate] = useState('');
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Scale for modal view
   const [scale, setScale] = useState(1);
@@ -97,6 +94,10 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
   const handlePrint = () => {
     if (!viewingInvoice) return;
 
+    // Save original title and set new title for PDF filename
+    const originalTitle = document.title;
+    document.title = `Invoice_${viewingInvoice.id}_${viewingInvoice.customerName.replace(/[^a-z0-9]/gi, '_')}`;
+
     // Create a temporary container for printing
     const printContainer = document.createElement('div');
     printContainer.id = 'print-only-container';
@@ -111,7 +112,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
       const clone = invoiceElement.cloneNode(true) as HTMLElement;
       clone.style.transform = 'none';
       clone.style.margin = '0';
-      clone.style.padding = '8px'; // Reduced padding for compact printing
+      clone.style.padding = '0'; // Use internal padding from template
       clone.style.width = '794px'; // A4 width in pixels at 96dpi
       clone.style.maxWidth = '100%';
       clone.style.boxSizing = 'border-box';
@@ -136,6 +137,8 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
           if (document.body.contains(printContainer)) {
             document.body.removeChild(printContainer);
           }
+          // Restore original title
+          document.title = originalTitle;
         };
 
         // Try to detect when print dialog closes using focus event (works on some browsers)
@@ -151,113 +154,28 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
     });
   };
 
-  const getInvoiceFile = async (): Promise<File | null> => {
-    if (!viewingInvoice) return null;
-    const element = document.getElementById('history-capture-hidden');
-    if (!element) return null;
-
-    setIsGeneratingPdf(true);
-    try {
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
-      });
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const imgWidth = pdfWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
-
-      const fileName = `Invoice_${viewingInvoice.id}_${viewingInvoice.customerName.replace(/[^a-z0-9]/gi, '_')}.pdf`;
-      const pdfBlob = pdf.output('blob');
-      return new File([pdfBlob], fileName, { type: 'application/pdf' });
-    } catch (error) {
-      console.error("PDF Generation failed", error);
-      return null;
-    } finally {
-      setIsGeneratingPdf(false);
-    }
+  const generatePDF = () => {
+    if (!viewingInvoice) return;
+    handlePrint();
   };
 
-  const generatePDF = async () => {
-    const file = await getInvoiceFile();
-    if (!file) return;
-
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(file);
-    link.download = file.name;
-    link.click();
-  };
-
-  const handleShareWhatsApp = async () => {
+  const handleShareWhatsApp = () => {
     if (!viewingInvoice) return;
 
-    const file = await getInvoiceFile();
-    if (!file) return;
-
-    // 1. Try Native Sharing (Recommended for Mobile)
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: `Invoice ${viewingInvoice.id}`,
-          text: `Invoice No: ${viewingInvoice.id} from ${settings.name}`,
-        });
-        return;
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') console.error(err);
-      }
-    }
-
-    // 2. Fallback for Desktop
-    const url = URL.createObjectURL(file);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = file.name;
-    link.click();
-
-    const itemsList = viewingInvoice.items.map(i => `${i.name}${i.packing ? `(${i.packing})` : ''}: ${i.quantity}${i.unit} x ${i.rate} = ${i.amount}`).join('%0a');
+    const itemsList = viewingInvoice.items.map(i => `${i.name}${i.packing ? ` (${i.packing})` : ''}: ${i.quantity}${i.unit} x ₹${i.rate} = ₹${i.amount}`).join('%0a');
     const text = `*INVOICE No: ${viewingInvoice.id}*%0aDate: ${viewingInvoice.date}%0aCustomer: ${viewingInvoice.customerName}%0a%0a*Items:*%0a${itemsList}%0a%0a*TOTAL: ₹${viewingInvoice.total}*`;
 
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
-    alert("IMPORTANT: WhatsApp Web doesn't allow auto-attaching files.\n\n1. The PDF has been downloaded.\n2. We've opened WhatsApp.\n3. Please drag the downloaded PDF into the chat.");
+    alert("To share the PDF:\n1. Click 'Save as PDF' button to print/save the invoice\n2. Then manually attach it to your WhatsApp message");
   };
 
-  const handleShareEmail = async () => {
+  const handleShareEmail = () => {
     if (!viewingInvoice) return;
 
-    const file = await getInvoiceFile();
-    if (!file) return;
-
-    // 1. Try Native Sharing
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: `Invoice ${viewingInvoice.id}`,
-        });
-        return;
-      } catch (err) {
-        if ((err as Error).name !== 'AbortError') console.error(err);
-      }
-    }
-
-    // 2. Desktop Fallback
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(file);
-    link.download = file.name;
-    link.click();
-
     const subject = `Invoice ${viewingInvoice.id} from ${settings.name}`;
-    const body = `Dear ${viewingInvoice.customerName},\n\nPlease find the invoice details below:\n\nTotal Amount: ₹${viewingInvoice.total}\n\nI have attached the PDF invoice to this email.\n\nThank you.`;
+    const body = `Dear ${viewingInvoice.customerName},\n\nPlease find the invoice details below:\n\nInvoice No: ${viewingInvoice.id}\nDate: ${viewingInvoice.date}\nTotal Amount: ₹${viewingInvoice.total}\n\nPlease use 'Save as PDF' button to print/save the invoice, then attach it to this email.\n\nThank you.`;
 
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    alert("The PDF has been downloaded. Please attach it to your email manually.");
   };
 
   const handleExportCSV = () => {
@@ -494,31 +412,29 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                 <div className="flex flex-wrap gap-2 md:gap-3">
                   <button
                     onClick={generatePDF}
-                    disabled={isGeneratingPdf}
-                    className="flex items-center gap-1 md:gap-2 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-slate-600 disabled:opacity-50"
+                    className="flex items-center gap-1 md:gap-2 bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
+                    title="Save as PDF or Print"
                   >
-                    {isGeneratingPdf ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} className="md:w-4 md:h-4" />}
-                    <span>PDF</span>
+                    <FileDown size={14} className="md:w-4 md:h-4" />
+                    <span>Save as PDF</span>
                   </button>
                   <button
                     onClick={handleShareWhatsApp}
-                    disabled={isGeneratingPdf}
-                    className="flex items-center gap-1 md:gap-2 bg-green-600 hover:bg-green-700 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1 md:gap-2 bg-green-600 hover:bg-green-700 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
                   >
                     <Send size={14} className="md:w-4 md:h-4" />
                     <span className="hidden sm:inline">WhatsApp</span>
                   </button>
                   <button
                     onClick={handleShareEmail}
-                    disabled={isGeneratingPdf}
-                    className="flex items-center gap-1 md:gap-2 bg-blue-500 hover:bg-blue-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1 md:gap-2 bg-blue-500 hover:bg-blue-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
                   >
                     <Share2 size={14} className="md:w-4 md:h-4" />
                     <span className="hidden sm:inline">Email</span>
                   </button>
                   <button
                     onClick={handlePrint}
-                    className="flex items-center gap-1 md:gap-2 bg-slate-100 text-slate-900 hover:bg-white px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors"
+                    className="flex items-center gap-1 md:gap-2 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-slate-600"
                   >
                     <Printer size={14} className="md:w-4 md:h-4" />
                     <span>Print</span>
@@ -550,21 +466,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                   />
                 </div>
               </div>
-              {/* Hidden capture element */}
-              <div className="absolute -left-[9999px] top-0 no-print">
-                <div style={{ width: '794px', height: '1123px', background: 'white' }}>
-                  <InvoiceTemplate
-                    id="history-capture-hidden"
-                    billNo={viewingInvoice.id}
-                    date={viewingInvoice.date}
-                    customerName={viewingInvoice.customerName}
-                    customerCity={viewingInvoice.customerCity}
-                    items={viewingInvoice.items}
-                    settings={settings}
-                    gstRate={viewingInvoice.gstRate}
-                  />
-                </div>
-              </div>
+
 
             </div>
           </div>

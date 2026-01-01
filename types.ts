@@ -33,6 +33,8 @@ export interface BusinessSettings {
   themeColor: string;
   logoUrl?: string;
   logoWidth?: number;
+  signatureName?: string; // Custom name for signature (For, XYZ)
+  signatureUrl?: string; // Signature image
   // Bank Details
   bankName?: string;
   bankAccountNumber?: string;

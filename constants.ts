@@ -9,6 +9,8 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   themeColor: "#dc2626", // Default Red
   logoUrl: "",
   logoWidth: 80,
+  signatureName: "",
+  signatureUrl: "",
   bankName: "",
   bankAccountNumber: "",
   bankIfsc: "",

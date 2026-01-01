@@ -32,6 +32,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [selectedProductID, setSelectedProductID] = useState<string>('');
   const [qty, setQty] = useState<number>(1);
+  const [customRate, setCustomRate] = useState<string>(''); // Custom rate input
   const [showPreviewMobile, setShowPreviewMobile] = useState(false); // Mobile tab state
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -52,6 +53,18 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       onUnsavedChanges(hasChanges);
     }
   }, [items, customerName, customerCity, isSaved, onUnsavedChanges]);
+
+  // Auto-fill rate when product is selected
+  useEffect(() => {
+    if (selectedProductID) {
+      const product = products.find(p => p.id === selectedProductID);
+      if (product) {
+        setCustomRate(product.rate.toString());
+      }
+    } else {
+      setCustomRate('');
+    }
+  }, [selectedProductID, products]);
 
   // Scaling logic for responsiveness
   const [scale, setScale] = useState(1);
@@ -99,8 +112,11 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     const product = products.find(p => p.id === selectedProductID);
     if (!product) return;
 
-    // Check if item with same productId already exists in current bill
-    const existingIndex = items.findIndex(item => item.productId === product.id);
+    // Use custom rate if provided, otherwise use product's default rate
+    const finalRate = customRate && parseFloat(customRate) > 0 ? parseFloat(customRate) : product.rate;
+
+    // Check if item with same productId and same rate already exists in current bill
+    const existingIndex = items.findIndex(item => item.productId === product.id && item.rate === finalRate);
 
     if (existingIndex > -1) {
       const newItems = [...items];
@@ -119,8 +135,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         name: product.name,
         quantity: qty,
         unit: product.unit,
-        rate: product.rate,
-        amount: qty * product.rate,
+        rate: finalRate,
+        amount: qty * finalRate,
         packing: product.packing
       };
       setItems([...items, newItem]);
@@ -128,6 +144,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
     setSelectedProductID('');
     setQty(1);
+    setCustomRate('');
     setIsSaved(false);
   };
 
@@ -200,8 +217,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
     try {
       setIsSaving(true);
-      // Set isSaved to true IMMEDIATELY to lock the current bill number 
-      // before the parent component updates settings and triggers a re-render.
+      // Set isSaved to true BEFORE the save to lock the current bill number
+      // This prevents the useEffect from updating billNo when settings.nextInvoiceNumber changes
       setIsSaved(true);
       await onSaveInvoice(invoice);
       alert("Invoice saved to history successfully! You can now download or share it.");
@@ -214,21 +231,114 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   };
 
   const handlePrint = () => {
-    window.print();
+    // Create a temporary container for printing
+    const printContainer = document.createElement('div');
+    printContainer.id = 'print-only-container';
+    printContainer.className = 'print-only-container';
+    // Ensure immediate visibility for mobile browsers
+    printContainer.style.cssText = 'display: block !important; visibility: visible !important; position: static; width: 100%; height: auto; min-height: 0; background: white; z-index: 99999;';
+    document.body.appendChild(printContainer);
+
+    // Clone the invoice template and render it in the print container
+    const invoiceElement = document.getElementById('invoice-capture');
+    if (invoiceElement) {
+      const clone = invoiceElement.cloneNode(true) as HTMLElement;
+      clone.style.transform = 'none';
+      clone.style.margin = '0';
+      clone.style.padding = '0'; // Use internal padding from template
+      clone.style.width = '794px'; // A4 width in pixels at 96dpi
+      clone.style.maxWidth = '100%';
+      clone.style.boxSizing = 'border-box';
+      clone.style.visibility = 'visible';
+      clone.style.display = 'block';
+      clone.style.background = 'white';
+      clone.style.minHeight = '0'; // Override min-h-[297mm] to prevent blank second page
+      clone.style.height = 'auto';
+      printContainer.appendChild(clone);
+    }
+
+    // Use requestAnimationFrame to ensure DOM is painted before printing
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+
+        // Clean up after print dialog closes
+        const cleanup = () => {
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+        };
+
+        const handleFocus = () => {
+          setTimeout(cleanup, 500);
+          window.removeEventListener('focus', handleFocus);
+        };
+        window.addEventListener('focus', handleFocus);
+        setTimeout(cleanup, 3000);
+      });
+    });
   };
 
   const getInvoiceFile = async (): Promise<File | null> => {
     const element = document.getElementById('invoice-capture-hidden');
     if (!element) return null;
 
+    // Capture the current scroll position to restore it later
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+
+    // Scroll to top-left to avoid html2canvas coordinate offset issues
+    window.scrollTo(0, 0);
+
+    // Create a clean, isolated container for capture
+    const captureContainer = document.createElement('div');
+    captureContainer.id = 'pdf-capture-container';
+    captureContainer.style.position = 'absolute';
+    captureContainer.style.left = '0';
+    captureContainer.style.top = '0';
+    captureContainer.style.width = '794px';
+    captureContainer.style.height = '1123px';
+    captureContainer.style.background = 'white';
+    captureContainer.style.zIndex = '10000';
+    captureContainer.style.margin = '0';
+    captureContainer.style.padding = '0';
+    document.body.appendChild(captureContainer);
+
+    // Clone the hidden capture element - ENSURE IT IS THE ONLY CHILD
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.style.transform = 'none';
+    clone.style.margin = '0';
+    clone.style.padding = '0';
+    clone.style.width = '794px';
+    clone.style.height = '1123px';
+    clone.style.display = 'block';
+    clone.style.visibility = 'visible';
+    clone.style.position = 'relative';
+    clone.style.top = '0';
+    clone.style.left = '0';
+    captureContainer.appendChild(clone);
+
     setIsGeneratingPdf(true);
     try {
-      const canvas = await html2canvas(element, {
+      // Small delay for rendering stabilization
+      await new Promise(r => setTimeout(r, 500));
+
+      const canvas = await html2canvas(clone, {
         scale: 2,
         useCORS: true,
         logging: false,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        width: 794,
+        height: 1123,
+        scrollX: 0,
+        scrollY: 0,
+        x: 0,
+        y: 0
       });
+
+      // Cleanup
+      document.body.removeChild(captureContainer);
+      window.scrollTo(scrollX, scrollY);
 
       const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF('p', 'mm', 'a4');
@@ -243,6 +353,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       return new File([pdfBlob], fileName, { type: 'application/pdf' });
     } catch (error) {
       console.error("PDF Generation failed", error);
+      if (document.body.contains(captureContainer)) {
+        document.body.removeChild(captureContainer);
+      }
+      window.scrollTo(scrollX, scrollY);
       return null;
     } finally {
       setIsGeneratingPdf(false);
@@ -253,8 +367,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     const file = await getInvoiceFile();
     if (!file) return false;
 
+    const fileURL = URL.createObjectURL(file);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(file);
+    link.href = fileURL;
     link.download = file.name;
     link.click();
     return true;
@@ -436,34 +551,55 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         {/* Add Items */}
         <div className="mb-6">
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Add Products</h3>
-          <div className="flex gap-2 mb-2 items-start">
+          <div className="space-y-2 mb-2">
             <select
               value={selectedProductID}
               onChange={(e) => setSelectedProductID(e.target.value)}
               disabled={isSaved}
-              className="flex-1 p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white min-w-0 disabled:bg-slate-50 disabled:text-slate-500"
+              className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-500"
             >
               <option value="">Select Item...</option>
               {products.map(p => (
                 <option key={p.id} value={p.id}>{p.name} {p.packing ? `(${p.packing})` : ''}</option>
               ))}
             </select>
-            <input
-              type="number"
-              value={qty}
-              onChange={(e) => setQty(Number(e.target.value))}
-              disabled={isSaved}
-              min="1"
-              step="1"
-              className="w-16 p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm text-center disabled:bg-slate-50 disabled:text-slate-500"
-            />
-            <button
-              onClick={addItem}
-              disabled={isSaved}
-              className="bg-red-600 text-white p-2 rounded hover:bg-red-700 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
+            <div className="flex gap-2 items-start">
+              <div className="flex-1">
+                <label className="text-xs text-slate-500 block mb-1">Rate (₹)</label>
+                <input
+                  type="number"
+                  value={customRate}
+                  onChange={(e) => setCustomRate(e.target.value)}
+                  disabled={isSaved || !selectedProductID}
+                  min="0"
+                  step="0.01"
+                  placeholder="Rate"
+                  className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+                />
+              </div>
+              <div className="w-20">
+                <label className="text-xs text-slate-500 block mb-1">Qty</label>
+                <input
+                  type="number"
+                  value={qty}
+                  onChange={(e) => setQty(Number(e.target.value))}
+                  disabled={isSaved}
+                  min="1"
+                  step="1"
+                  className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm text-center disabled:bg-slate-50 disabled:text-slate-500"
+                />
+              </div>
+              <div className="pt-5">
+                <button
+                  onClick={addItem}
+                  disabled={isSaved || !selectedProductID}
+                  className="bg-red-600 text-white p-2 rounded hover:bg-red-700 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Add Item"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -553,30 +689,37 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             onClick={handleSave}
             disabled={items.length === 0 || isSaved || !customerName.trim() || isSaving}
             title={!customerName.trim() && items.length > 0 ? "Please add customer name" : ""}
-            className="flex items-center justify-center gap-2 bg-indigo-600 text-white p-3 rounded hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-2 bg-indigo-600 text-white p-3 rounded hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
           >
             {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isSaving ? "Saving..." : "Save"}
+            {isSaving ? "Save" : "Save"}
+          </button>
+          <button
+            onClick={handlePrint}
+            disabled={!isSaved || isSaving}
+            className="flex items-center justify-center gap-2 bg-red-600 text-white p-3 rounded hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
+          >
+            <Printer className="w-4 h-4" /> Print
           </button>
           <button
             onClick={generatePDF}
-            disabled={isGeneratingPdf || !isSaved}
-            className="flex items-center justify-center gap-2 bg-slate-700 text-white p-3 rounded hover:bg-slate-600 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isGeneratingPdf || !isSaved || isSaving}
+            className="flex items-center justify-center gap-2 bg-slate-700 text-white p-3 rounded hover:bg-slate-600 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
           >
             {isGeneratingPdf ? <span className="animate-spin">⌛</span> : <Download className="w-4 h-4" />} PDF
           </button>
           <button
             onClick={handleShareWhatsApp}
-            disabled={isGeneratingPdf || !isSaved}
-            className="flex items-center justify-center gap-2 bg-green-600 text-white p-3 rounded hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm font-bold"
+            disabled={isGeneratingPdf || !isSaved || isSaving}
+            className="flex items-center justify-center gap-2 bg-green-600 text-white p-3 rounded hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
             title="Share PDF via WhatsApp"
           >
             <Send className="w-4 h-4" /> WhatsApp
           </button>
           <button
             onClick={handleShareEmail}
-            disabled={isGeneratingPdf || !isSaved}
-            className="flex items-center justify-center gap-2 bg-blue-600 text-white p-3 rounded hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm font-bold"
+            disabled={isGeneratingPdf || !isSaved || isSaving}
+            className="flex items-center justify-center gap-2 bg-blue-600 text-white p-3 rounded hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
             title="Share PDF via Email"
           >
             <Share2 className="w-4 h-4" /> Email
