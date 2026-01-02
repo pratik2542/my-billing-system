@@ -228,6 +228,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   };
 
   const handlePrint = () => {
+    // Save original title and set new title for PDF filename
+    const originalTitle = document.title;
+    document.title = `Invoice_${billNo}_${customerName.replace(/[^a-z0-9]/gi, '_')}`;
+
     // Create a temporary container for printing
     const printContainer = document.createElement('div');
     printContainer.id = 'print-only-container';
@@ -264,6 +268,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           if (document.body.contains(printContainer)) {
             document.body.removeChild(printContainer);
           }
+          // Restore original title
+          document.title = originalTitle;
         };
 
         const handleFocus = () => {
