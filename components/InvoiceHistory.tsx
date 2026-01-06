@@ -1,14 +1,16 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Invoice, BusinessSettings } from '../types';
-import { Search, Eye, X, Printer, Download } from 'lucide-react';
+import { Search, Eye, X, Printer, Download, Edit, Trash2 } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
 
 interface InvoiceHistoryProps {
   invoices: Invoice[];
   settings: BusinessSettings;
+  onDeleteInvoice?: (invoiceId: string) => void;
+  onEditInvoice?: (invoice: Invoice) => void;
 }
 
-export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settings }) => {
+export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settings, onDeleteInvoice, onEditInvoice }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -289,9 +291,30 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                   </div>
                   <div className="pt-3 border-t border-slate-100">
                     <p className="text-xs text-slate-500 truncate mb-2">{preview || 'No items'}{moreCount}</p>
-                    <button className="w-full bg-indigo-50 text-indigo-600 py-2 px-3 rounded-lg hover:bg-indigo-100 flex items-center justify-center gap-2 font-medium text-sm transition-colors">
-                      <Eye size={16} /> View Invoice
-                    </button>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setViewingInvoice(inv); }}
+                        className="bg-indigo-50 text-indigo-600 py-2 px-2 rounded-lg hover:bg-indigo-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                      >
+                        <Eye size={14} /> View
+                      </button>
+                      {onEditInvoice && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); onEditInvoice(inv); }}
+                          className="bg-blue-50 text-blue-600 py-2 px-2 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                        >
+                          <Edit size={14} /> Edit
+                        </button>
+                      )}
+                      {onDeleteInvoice && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); onDeleteInvoice(inv.id); }}
+                          className="bg-red-50 text-red-600 py-2 px-2 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -345,6 +368,24 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                           >
                             <Eye size={16} />
                           </button>
+                          {onEditInvoice && (
+                            <button
+                              onClick={() => onEditInvoice(inv)}
+                              className="bg-blue-100 hover:bg-blue-200 text-blue-700 p-2 rounded-full transition-colors"
+                              title="Edit Invoice"
+                            >
+                              <Edit size={16} />
+                            </button>
+                          )}
+                          {onDeleteInvoice && (
+                            <button
+                              onClick={() => onDeleteInvoice(inv.id)}
+                              className="bg-red-100 hover:bg-red-200 text-red-700 p-2 rounded-full transition-colors"
+                              title="Delete Invoice"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => { e.stopPropagation(); setExpandedId(prev => prev === inv.id ? null : inv.id); }}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded transition-colors text-xs"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2 } from 'lucide-react';
+import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
 import { Product, Customer, InvoiceItem, BusinessSettings, Invoice } from '../types';
 
@@ -10,6 +10,8 @@ interface InvoiceGeneratorProps {
   onUpdateSettings: (newSettings: BusinessSettings) => void;
   onSaveInvoice: (invoice: Invoice) => Promise<void>;
   onUnsavedChanges?: (hasChanges: boolean) => void;
+  editingInvoice?: Invoice | null;
+  onClearEditingInvoice?: () => void;
 }
 
 export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
@@ -18,7 +20,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   settings,
   onUpdateSettings,
   onSaveInvoice,
-  onUnsavedChanges
+  onUnsavedChanges,
+  editingInvoice,
+  onClearEditingInvoice
 }) => {
   // Initialize billNo from settings
   const [billNo, setBillNo] = useState<string>(settings.nextInvoiceNumber.toString());
@@ -35,13 +39,30 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Load editing invoice data
+  useEffect(() => {
+    if (editingInvoice) {
+      setBillNo(editingInvoice.id);
+      setDate(editingInvoice.date);
+      setCustomerName(editingInvoice.customerName);
+      setCustomerCity(editingInvoice.customerCity);
+      setItems(editingInvoice.items);
+      setIsSaved(false);
+      // Try to find matching customer
+      const matchingCustomer = customers.find(c => c.name === editingInvoice.customerName);
+      if (matchingCustomer) {
+        setSelectedCustomer(matchingCustomer);
+      }
+    }
+  }, [editingInvoice, customers]);
+
   // Sync billNo if settings change externally or on mount
   useEffect(() => {
-    // Only update billNo if we're not looking at a just-saved invoice
-    if (!isSaved) {
+    // Only update billNo if we're not looking at a just-saved invoice or editing
+    if (!isSaved && !editingInvoice) {
       setBillNo(settings.nextInvoiceNumber.toString());
     }
-  }, [settings.nextInvoiceNumber, isSaved]);
+  }, [settings.nextInvoiceNumber, isSaved, editingInvoice]);
 
   // Notify parent of unsaved changes
   useEffect(() => {
@@ -218,7 +239,18 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       // This prevents the useEffect from updating billNo when settings.nextInvoiceNumber changes
       setIsSaved(true);
       await onSaveInvoice(invoice);
-      alert("Invoice saved to history successfully! You can now download or share it.");
+      
+      if (editingInvoice) {
+        alert("Invoice updated successfully!");
+        // Clear editing state
+        if (onClearEditingInvoice) {
+          onClearEditingInvoice();
+        }
+        // Reset form
+        resetForm();
+      } else {
+        alert("Invoice saved to history successfully! You can now download or share it.");
+      }
     } catch (e) {
       setIsSaved(false);
       // onSaveInvoice will have alerted; keep current form intact
@@ -305,6 +337,34 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
       {/* LEFT: Controls */}
       <div className={`w-full lg:w-2/5 h-full bg-white p-4 lg:p-6 rounded-lg shadow-md border border-slate-200 overflow-y-auto no-print ${showPreviewMobile ? 'hidden lg:block' : 'block'}`}>
+        
+        {/* Editing Banner */}
+        {editingInvoice && (
+          <div className="mb-4 p-3 bg-blue-50 border-2 border-blue-300 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Edit className="w-5 h-5 text-blue-600" />
+                <div>
+                  <p className="font-bold text-blue-900 text-sm">Editing Invoice #{editingInvoice.id}</p>
+                  <p className="text-xs text-blue-700">Make changes and click Save to update</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  if (window.confirm("Cancel editing? Any changes will be lost.")) {
+                    if (onClearEditingInvoice) onClearEditingInvoice();
+                    resetForm();
+                  }
+                }}
+                className="text-blue-600 hover:text-blue-800 p-1"
+                title="Cancel editing"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Printer className="w-5 h-5 text-red-600" />
@@ -314,6 +374,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             onClick={() => {
               if (items.length > 0) {
                 if (window.confirm("Start a new bill? Current items will be cleared.")) {
+                  if (onClearEditingInvoice) onClearEditingInvoice();
                   resetForm();
                 }
               } else {
@@ -330,12 +391,15 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         {/* Header Details */}
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Bill No (Auto)</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+              {editingInvoice ? 'Bill No (Locked)' : 'Bill No (Auto)'}
+            </label>
             <input
               type="text"
               value={billNo}
               readOnly
               className="w-full p-2 border border-slate-200 bg-slate-100 text-slate-500 rounded outline-none text-sm cursor-not-allowed"
+              title={editingInvoice ? 'Cannot change bill number when editing' : 'Auto-generated bill number'}
             />
           </div>
           <div>
@@ -534,7 +598,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             className="flex items-center justify-center gap-2 bg-indigo-600 text-white p-3 rounded hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
           >
             {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isSaving ? "Save" : "Save"}
+            {isSaving ? "Saving..." : (editingInvoice ? "Update Invoice" : "Save")}
           </button>
           <button
             onClick={handlePrint}

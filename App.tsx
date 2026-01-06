@@ -92,6 +92,14 @@ const App: React.FC = () => {
   const [pendingLogoWidth, setPendingLogoWidth] = useState<number | null>(null);
   const [isSavingSize, setIsSavingSize] = useState(false);
 
+  // --- Settings Edit State ---
+  const [tempSettings, setTempSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
+  const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // --- Invoice Edit State ---
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+
   // --- Authentication Listener ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -111,7 +119,9 @@ const App: React.FC = () => {
     const settingsRef = doc(db, 'settings', 'general'); // Single doc for business settings
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
-        setSettings({ ...DEFAULT_BUSINESS_SETTINGS, ...docSnap.data() } as BusinessSettings);
+        const loadedSettings = { ...DEFAULT_BUSINESS_SETTINGS, ...docSnap.data() } as BusinessSettings;
+        setSettings(loadedSettings);
+        setTempSettings(loadedSettings);
       } else {
         // Initialize if doesn't exist
         setDoc(settingsRef, DEFAULT_BUSINESS_SETTINGS);
@@ -197,11 +207,16 @@ const App: React.FC = () => {
 
   // --- Navigation Guard ---
   const handleTabChange = (tab: AppTab) => {
-    if (activeTab === AppTab.CREATE_BILL && hasUnsavedChanges && tab !== AppTab.CREATE_BILL) {
-      if (!window.confirm("You have unsaved changes in your bill. Are you sure you want to leave? Your progress will be lost.")) {
+    if (activeTab === AppTab.CREATE_BILL && (hasUnsavedChanges || editingInvoice) && tab !== AppTab.CREATE_BILL) {
+      const message = editingInvoice 
+        ? "You are currently editing an invoice. Are you sure you want to leave? Your changes will be lost."
+        : "You have unsaved changes in your bill. Are you sure you want to leave? Your progress will be lost.";
+      
+      if (!window.confirm(message)) {
         return;
       }
       setHasUnsavedChanges(false);
+      setEditingInvoice(null); // Clear editing state when navigating away
     }
     setActiveTab(tab);
   };
@@ -229,16 +244,24 @@ const App: React.FC = () => {
 
   const handleSaveInvoice = async (invoice: Invoice) => {
     try {
-      // Save invoice document and update next invoice number in parallel
-      const nextNo = (settings.nextInvoiceNumber || 0) + 1;
+      // Check if we're editing an existing invoice
+      const isEditing = editingInvoice && editingInvoice.id === invoice.id;
       
-      await Promise.all([
-        setDoc(doc(db, 'invoices', invoice.id), invoice),
-        updateDoc(doc(db, 'settings', 'general'), { nextInvoiceNumber: nextNo })
-      ]);
+      if (isEditing) {
+        // Just update the invoice without incrementing the counter
+        await setDoc(doc(db, 'invoices', invoice.id), invoice);
+      } else {
+        // Save new invoice and increment counter
+        const nextNo = (settings.nextInvoiceNumber || 0) + 1;
+        
+        await Promise.all([
+          setDoc(doc(db, 'invoices', invoice.id), invoice),
+          updateDoc(doc(db, 'settings', 'general'), { nextInvoiceNumber: nextNo })
+        ]);
 
-      // Update local state optimistically
-      setSettings(prev => ({ ...prev, nextInvoiceNumber: nextNo }));
+        // Update local state optimistically
+        setSettings(prev => ({ ...prev, nextInvoiceNumber: nextNo }));
+      }
     } catch (e) {
       console.error("Error saving invoice: ", e);
       alert("Failed to save invoice to database.");
@@ -253,6 +276,28 @@ const App: React.FC = () => {
       await setDoc(doc(db, 'settings', 'general'), newSettings);
     } catch (e) {
       console.error("Error saving settings: ", e);
+    }
+  };
+
+  // Handle temporary settings changes (for Save button feature)
+  const handleTempSettingsChange = (newSettings: BusinessSettings) => {
+    setTempSettings(newSettings);
+    setHasUnsavedSettings(true);
+  };
+
+  // Save settings with confirmation
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      await setDoc(doc(db, 'settings', 'general'), tempSettings);
+      setSettings(tempSettings);
+      setHasUnsavedSettings(false);
+      alert('Settings saved successfully!');
+    } catch (e) {
+      console.error("Error saving settings: ", e);
+      alert('Failed to save settings. Please try again.');
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
@@ -370,6 +415,24 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Error deleting customer:", e);
     }
+  };
+
+  // --- Invoice Handlers ---
+  const handleDeleteInvoice = async (invoiceId: string) => {
+    if (!window.confirm("Are you sure you want to delete this invoice? This action cannot be undone.")) return;
+    try {
+      await deleteDoc(doc(db, 'invoices', invoiceId));
+      alert('Invoice deleted successfully!');
+    } catch (e) {
+      console.error("Error deleting invoice:", e);
+      alert("Failed to delete invoice. Please try again.");
+    }
+  };
+
+  const handleEditInvoice = (invoice: Invoice) => {
+    // Set the invoice to edit and switch to create bill tab
+    setEditingInvoice(invoice);
+    setActiveTab(AppTab.CREATE_BILL);
   };
 
   // --- Logo Handlers ---
@@ -733,6 +796,8 @@ const App: React.FC = () => {
               onUpdateSettings={handleUpdateSettings}
               onSaveInvoice={handleSaveInvoice}
               onUnsavedChanges={(hasChanges) => setHasUnsavedChanges(hasChanges)}
+              editingInvoice={editingInvoice}
+              onClearEditingInvoice={() => setEditingInvoice(null)}
             />
           </div>
         )}
@@ -742,6 +807,8 @@ const App: React.FC = () => {
             <InvoiceHistory
               invoices={invoices}
               settings={settings}
+              onDeleteInvoice={handleDeleteInvoice}
+              onEditInvoice={handleEditInvoice}
             />
           </div>
         )}
@@ -947,8 +1014,7 @@ const App: React.FC = () => {
                     />
                     <input
                       name="city"
-                      required
-                      placeholder="City *"
+                      placeholder="City"
                       value={custForm.city}
                       onChange={e => setCustForm({ ...custForm, city: e.target.value })}
                       className="w-full p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
@@ -1093,11 +1159,11 @@ const App: React.FC = () => {
                       <div className="flex items-center gap-3">
                         <input
                           type="color"
-                          value={settings.themeColor || '#dc2626'}
-                          onChange={e => handleUpdateSettings({ ...settings, themeColor: e.target.value })}
+                          value={tempSettings.themeColor || '#dc2626'}
+                          onChange={e => handleTempSettingsChange({ ...tempSettings, themeColor: e.target.value })}
                           className="h-10 w-20 p-1 border border-slate-300 rounded cursor-pointer"
                         />
-                        <span className="text-sm text-slate-500 font-medium">{settings.themeColor || '#dc2626'}</span>
+                        <span className="text-sm text-slate-500 font-medium">{tempSettings.themeColor || '#dc2626'}</span>
                       </div>
                     </div>
 
@@ -1211,40 +1277,40 @@ const App: React.FC = () => {
                   <div>
                     <label className="block text-sm font-bold text-slate-600 mb-1">Business Name (Header)</label>
                     <input
-                      value={settings.name}
-                      onChange={e => handleUpdateSettings({ ...settings, name: e.target.value })}
+                      value={tempSettings.name}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, name: e.target.value })}
                       className="w-full p-2 border border-slate-300 rounded"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-slate-600 mb-1">Subtitle / Full Name</label>
                     <input
-                      value={settings.subName}
-                      onChange={e => handleUpdateSettings({ ...settings, subName: e.target.value })}
+                      value={tempSettings.subName}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, subName: e.target.value })}
                       className="w-full p-2 border border-slate-300 rounded"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-slate-600 mb-1">Address</label>
                     <input
-                      value={settings.address}
-                      onChange={e => handleUpdateSettings({ ...settings, address: e.target.value })}
+                      value={tempSettings.address}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, address: e.target.value })}
                       className="w-full p-2 border border-slate-300 rounded"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-slate-600 mb-1">Mobile</label>
                     <input
-                      value={settings.mobile}
-                      onChange={e => handleUpdateSettings({ ...settings, mobile: e.target.value })}
+                      value={tempSettings.mobile}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, mobile: e.target.value })}
                       className="w-full p-2 border border-slate-300 rounded"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-slate-600 mb-1">Logo Initial (Fallback)</label>
                     <input
-                      value={settings.logoInitial}
-                      onChange={e => handleUpdateSettings({ ...settings, logoInitial: e.target.value })}
+                      value={tempSettings.logoInitial}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, logoInitial: e.target.value })}
                       maxLength={1}
                       className="w-16 p-2 border border-slate-300 rounded text-center"
                     />
@@ -1252,8 +1318,8 @@ const App: React.FC = () => {
                   <div>
                     <label className="block text-sm font-bold text-slate-600 mb-1">Signature Name (Optional)</label>
                     <input
-                      value={settings.signatureName || ''}
-                      onChange={e => handleUpdateSettings({ ...settings, signatureName: e.target.value })}
+                      value={tempSettings.signatureName || ''}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, signatureName: e.target.value })}
                       placeholder="e.g., S.J.B.G.U (defaults to Business Name if empty)"
                       className="w-full p-2 border border-slate-300 rounded"
                     />
@@ -1318,20 +1384,20 @@ const App: React.FC = () => {
                       <input
                         type="checkbox"
                         id="enableGst"
-                        checked={settings.enableGst}
-                        onChange={e => handleUpdateSettings({ ...settings, enableGst: e.target.checked })}
+                        checked={tempSettings.enableGst}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, enableGst: e.target.checked })}
                         className="w-5 h-5 accent-red-600"
                       />
                       <label htmlFor="enableGst" className="text-sm font-bold text-slate-700 cursor-pointer select-none">Enable GST Calculation</label>
                     </div>
 
-                    {settings.enableGst && (
+                    {tempSettings.enableGst && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-8">
                         <div>
                           <label className="block text-sm font-bold text-slate-600 mb-1">GSTIN (Optional)</label>
                           <input
-                            value={settings.gstin || ''}
-                            onChange={e => handleUpdateSettings({ ...settings, gstin: e.target.value })}
+                            value={tempSettings.gstin || ''}
+                            onChange={e => handleTempSettingsChange({ ...tempSettings, gstin: e.target.value })}
                             placeholder="e.g. 24ABCDE1234F1Z5"
                             className="w-full p-2 border border-slate-300 rounded"
                           />
@@ -1340,8 +1406,8 @@ const App: React.FC = () => {
                           <label className="block text-sm font-bold text-slate-600 mb-1">Default GST Rate (%)</label>
                           <input
                             type="number"
-                            value={settings.defaultGstRate || 0}
-                            onChange={e => handleUpdateSettings({ ...settings, defaultGstRate: parseFloat(e.target.value) })}
+                            value={tempSettings.defaultGstRate || 0}
+                            onChange={e => handleTempSettingsChange({ ...tempSettings, defaultGstRate: parseFloat(e.target.value) })}
                             className="w-full p-2 border border-slate-300 rounded"
                           />
                         </div>
@@ -1357,8 +1423,8 @@ const App: React.FC = () => {
                     <div>
                       <label className="block text-sm font-bold text-slate-600 mb-1">Bank Name</label>
                       <input
-                        value={settings.bankName || ''}
-                        onChange={e => handleUpdateSettings({ ...settings, bankName: e.target.value })}
+                        value={tempSettings.bankName || ''}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankName: e.target.value })}
                         placeholder="e.g. Kotak Mahindra Bank"
                         className="w-full p-2 border border-slate-300 rounded"
                       />
@@ -1366,8 +1432,8 @@ const App: React.FC = () => {
                     <div>
                       <label className="block text-sm font-bold text-slate-600 mb-1">Account Number</label>
                       <input
-                        value={settings.bankAccountNumber || ''}
-                        onChange={e => handleUpdateSettings({ ...settings, bankAccountNumber: e.target.value })}
+                        value={tempSettings.bankAccountNumber || ''}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankAccountNumber: e.target.value })}
                         placeholder="e.g. 1234567890"
                         className="w-full p-2 border border-slate-300 rounded"
                       />
@@ -1375,8 +1441,8 @@ const App: React.FC = () => {
                     <div>
                       <label className="block text-sm font-bold text-slate-600 mb-1">IFSC Code</label>
                       <input
-                        value={settings.bankIfsc || ''}
-                        onChange={e => handleUpdateSettings({ ...settings, bankIfsc: e.target.value })}
+                        value={tempSettings.bankIfsc || ''}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankIfsc: e.target.value })}
                         placeholder="e.g. KKBK0001234"
                         className="w-full p-2 border border-slate-300 rounded"
                       />
@@ -1384,8 +1450,8 @@ const App: React.FC = () => {
                     <div>
                       <label className="block text-sm font-bold text-slate-600 mb-1">Branch</label>
                       <input
-                        value={settings.bankBranch || ''}
-                        onChange={e => handleUpdateSettings({ ...settings, bankBranch: e.target.value })}
+                        value={tempSettings.bankBranch || ''}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankBranch: e.target.value })}
                         placeholder="e.g. Main Branch"
                         className="w-full p-2 border border-slate-300 rounded"
                       />
@@ -1401,19 +1467,19 @@ const App: React.FC = () => {
                       <input
                         type="checkbox"
                         id="showUpiQr"
-                        checked={settings.showUpiQr}
-                        onChange={e => handleUpdateSettings({ ...settings, showUpiQr: e.target.checked })}
+                        checked={tempSettings.showUpiQr}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, showUpiQr: e.target.checked })}
                         className="w-5 h-5 accent-blue-600"
                       />
                       <label htmlFor="showUpiQr" className="text-sm font-bold text-slate-700 cursor-pointer select-none">Show UPI QR Code on Bill</label>
                     </div>
 
-                    {settings.showUpiQr && (
+                    {tempSettings.showUpiQr && (
                       <div className="pl-8">
                         <label className="block text-sm font-bold text-slate-600 mb-1">UPI ID (VPA)</label>
                         <input
-                          value={settings.upiId || ''}
-                          onChange={e => handleUpdateSettings({ ...settings, upiId: e.target.value })}
+                          value={tempSettings.upiId || ''}
+                          onChange={e => handleTempSettingsChange({ ...tempSettings, upiId: e.target.value })}
                           placeholder="e.g. yourname@okaxis or yournumber@upi"
                           className="w-full p-2 border border-slate-300 rounded"
                         />
@@ -1431,11 +1497,42 @@ const App: React.FC = () => {
                     <p className="text-xs text-slate-500 mb-3">Manually update this only if you need to reset or skip numbers.</p>
                     <input
                       type="number"
-                      value={settings.nextInvoiceNumber}
-                      onChange={e => handleUpdateSettings({ ...settings, nextInvoiceNumber: parseInt(e.target.value) || 1 })}
+                      value={tempSettings.nextInvoiceNumber}
+                      onChange={e => handleTempSettingsChange({ ...tempSettings, nextInvoiceNumber: parseInt(e.target.value) || 1 })}
                       className="w-full md:w-32 p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
                     />
                   </div>
+
+                  {/* Save Button */}
+                  {hasUnsavedSettings && (
+                    <div className="sticky bottom-0 mt-6 p-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg shadow-lg">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-5 h-5 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          <span className="font-bold text-yellow-800">You have unsaved changes</span>
+                        </div>
+                        <button
+                          onClick={handleSaveSettings}
+                          disabled={isSavingSettings}
+                          className="bg-green-600 hover:bg-green-700 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2.5 px-6 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all"
+                        >
+                          {isSavingSettings ? (
+                            <>
+                              <Loader2 className="animate-spin w-4 h-4" />
+                              <span>Saving...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Save size={18} />
+                              <span>Save Settings</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Mobile Logout Button */}
                   <div className="md:hidden mt-6">
@@ -1444,13 +1541,15 @@ const App: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* Auto-Save Notice */}
-                  <div className="mt-6 p-4 bg-green-50 text-green-700 rounded-lg text-sm border border-green-200 flex items-center gap-3">
-                    <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    <span className="font-medium">Changes are automatically synced to the cloud</span>
-                  </div>
+                  {/* Notice */}
+                  {!hasUnsavedSettings && (
+                    <div className="mt-6 p-4 bg-green-50 text-green-700 rounded-lg text-sm border border-green-200 flex items-center gap-3">
+                      <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <span className="font-medium">All changes saved</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
