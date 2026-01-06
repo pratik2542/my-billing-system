@@ -28,6 +28,17 @@ interface AIAnalysisResult {
 
 const COLORS = ['#dc2626', '#ea580c', '#d97706', '#65a30d', '#059669', '#0891b2', '#2563eb', '#7c3aed'];
 
+// Helper to format weight
+const formatWeight = (grams: number): string => {
+  if (grams === 0) return '-';
+  const kg = Math.floor(grams / 1000);
+  const gm = Math.round(grams % 1000);
+  const parts = [];
+  if (kg > 0) parts.push(`${kg} Kg`);
+  if (gm > 0) parts.push(`${gm} Gm`);
+  return parts.join(' ') || '-';
+};
+
 // --- Simple Custom Charts (No Recharts Dependency) ---
 
 const SimpleBarChart = ({ data }: { data: { dateStr: string, revenue: number }[] }) => {
@@ -58,7 +69,7 @@ const SimpleBarChart = ({ data }: { data: { dateStr: string, revenue: number }[]
   );
 };
 
-const SimplePieChart = ({ data }: { data: { name: string, value: number }[] }) => {
+const SimplePieChart = ({ data, showWeight }: { data: { name: string, value: number, weight?: number }[], showWeight?: boolean }) => {
   if (data.length === 0) return <div className="h-full flex items-center justify-center text-slate-400">No data</div>;
 
   const total = data.reduce((sum, d) => sum + d.value, 0);
@@ -96,6 +107,9 @@ const SimplePieChart = ({ data }: { data: { name: string, value: number }[] }) =
             <div className="flex flex-col min-w-0">
               <span className="text-slate-600 font-bold truncate" title={d.name}>{d.name}</span>
               <span className="text-slate-400 font-medium whitespace-nowrap">₹{d.value}</span>
+              {showWeight && d.weight !== undefined && (
+                <span className="text-slate-500 font-medium text-[9px] md:text-[10px]">{formatWeight(d.weight)}</span>
+              )}
             </div>
           </div>
         ))}
@@ -116,17 +130,125 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
     const avgBillValue = totalBills > 0 ? totalRevenue / totalBills : 0;
 
     // Product Frequency
-    const productSales: Record<string, number> = {};
+    const productSales: Record<string, { amount: number; weightGrams: number }> = {};
     invoices.forEach(inv => {
       if (inv.items && Array.isArray(inv.items)) {
         inv.items.forEach(item => {
           const amt = Number(item.amount) || 0;
-          productSales[item.name] = (productSales[item.name] || 0) + amt;
+          if (!productSales[item.name]) {
+            productSales[item.name] = { amount: 0, weightGrams: 0 };
+          }
+          productSales[item.name].amount += amt;
+
+          // Calculate weight for this item
+          const qty = item.quantity;
+          const unit = item.unit.toLowerCase().trim();
+          
+          if (['kg'].includes(unit)) {
+            productSales[item.name].weightGrams += qty * 1000;
+          } else if (['gm', 'g', 'gram', 'grams'].includes(unit)) {
+            productSales[item.name].weightGrams += qty;
+          } else if (item.packing) {
+            // Non-weight unit, calculate from packing
+            const text = item.packing.toLowerCase().trim();
+            const match = text.match(/^(\d+(\.\d+)?)\s*(kg|gm|g|ltr|ml|l)/);
+            if (match) {
+              let value = parseFloat(match[1]);
+              const packingUnit = match[3];
+              if (['kg', 'ltr', 'l'].includes(packingUnit)) {
+                value *= 1000;
+              }
+              productSales[item.name].weightGrams += value * qty;
+            }
+          }
         });
       }
     });
 
-    const topProduct = Object.entries(productSales).sort((a, b) => b[1] - a[1])[0];
+    const topProduct = Object.entries(productSales).sort((a, b) => b[1].amount - a[1].amount)[0];
+
+    // --- Customer Analytics ---
+    const customerData: Record<string, {
+      totalSpent: number;
+      invoiceCount: number;
+      items: Record<string, { quantity: number; amount: number; weightGrams: number }>;
+      lastPurchase: string;
+      totalWeightGrams: number;
+    }> = {};
+
+    invoices.forEach(inv => {
+      const customer = inv.customerName;
+      if (!customerData[customer]) {
+        customerData[customer] = {
+          totalSpent: 0,
+          invoiceCount: 0,
+          items: {},
+          lastPurchase: inv.date,
+          totalWeightGrams: 0
+        };
+      }
+
+      customerData[customer].totalSpent += Number(inv.total) || 0;
+      customerData[customer].invoiceCount += 1;
+      
+      // Track last purchase date
+      const currentDate = inv.date;
+      const existingDate = customerData[customer].lastPurchase;
+      // Simple string comparison works for DD/MM/YYYY if same format
+      if (currentDate > existingDate) {
+        customerData[customer].lastPurchase = currentDate;
+      }
+
+      // Track items bought by customer
+      if (inv.items && Array.isArray(inv.items)) {
+        inv.items.forEach(item => {
+          if (!customerData[customer].items[item.name]) {
+            customerData[customer].items[item.name] = { quantity: 0, amount: 0, weightGrams: 0 };
+          }
+          customerData[customer].items[item.name].quantity += item.quantity;
+          customerData[customer].items[item.name].amount += Number(item.amount) || 0;
+
+          // Calculate weight for this item
+          const qty = item.quantity;
+          const unit = item.unit.toLowerCase().trim();
+          let itemWeight = 0;
+          
+          if (['kg'].includes(unit)) {
+            itemWeight = qty * 1000;
+            customerData[customer].totalWeightGrams += itemWeight;
+          } else if (['gm', 'g', 'gram', 'grams'].includes(unit)) {
+            itemWeight = qty;
+            customerData[customer].totalWeightGrams += itemWeight;
+          } else if (item.packing) {
+            const text = item.packing.toLowerCase().trim();
+            const match = text.match(/^(\d+(\.\d+)?)\s*(kg|gm|g|ltr|ml|l)/);
+            if (match) {
+              let value = parseFloat(match[1]);
+              const packingUnit = match[3];
+              if (['kg', 'ltr', 'l'].includes(packingUnit)) {
+                value *= 1000;
+              }
+              itemWeight = value * qty;
+              customerData[customer].totalWeightGrams += itemWeight;
+            }
+          }
+          
+          customerData[customer].items[item.name].weightGrams += itemWeight;
+        });
+      }
+    });
+
+    // Top customers by revenue
+    const topCustomers = Object.entries(customerData)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.totalSpent - a.totalSpent)
+      .slice(0, 10);
+
+    // Customer frequency chart data (top 5)
+    const chartDataCustomers = topCustomers.slice(0, 5).map(c => ({
+      name: c.name,
+      value: c.totalSpent
+    }));
 
     // --- Chart Data Preparation ---
 
@@ -198,7 +320,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
     // 2. Product Distribution (Top 5)
     const chartDataProducts = Object.entries(productSales)
-      .map(([name, value]) => ({ name, value }))
+      .map(([name, data]) => ({ 
+        name, 
+        value: data.amount,
+        weight: data.weightGrams
+      }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
 
@@ -207,9 +333,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       totalBills,
       avgBillValue,
       topProductName: topProduct ? topProduct[0] : 'N/A',
-      topProductValue: topProduct ? topProduct[1] : 0,
+      topProductValue: topProduct ? topProduct[1].amount : 0,
       chartDataRevenue,
-      chartDataProducts
+      chartDataProducts,
+      topCustomers,
+      chartDataCustomers,
+      customerData,
+      productSales
     };
   }, [invoices]);
 
@@ -387,8 +517,101 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                   <PieIcon size={18} className="text-purple-600 md:w-5 md:h-5" />
                   <span>Top Products</span>
                 </h3>
-                <div className="h-48 md:h-64 w-full">
-                  <SimplePieChart data={stats.chartDataProducts} />
+                <div className="h-64 md:h-64 w-full">
+                  <SimplePieChart data={stats.chartDataProducts} showWeight={true} />
+                </div>
+              </div>
+            </div>
+
+            {/* --- Customer Analytics Section --- */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 md:p-6 rounded-xl shadow-sm border border-blue-200">
+              <h3 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <Users className="w-5 h-6 text-blue-600" />
+                Customer Analytics
+              </h3>
+
+              {/* Top Customers by Revenue */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-6">
+                {/* Customer Revenue Distribution */}
+                <div className="bg-white p-4 rounded-lg shadow-sm">
+                  <h4 className="font-bold text-slate-700 text-sm mb-3">Top Customers by Revenue</h4>
+                  <div className="h-48 md:h-64 w-full">
+                    <SimplePieChart data={stats.chartDataCustomers} />
+                  </div>
+                </div>
+
+                {/* Customer Leaderboard */}
+                <div className="bg-white p-4 rounded-lg shadow-sm">
+                  <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Leaderboard</h4>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {stats.topCustomers.slice(0, 8).map((customer, idx) => (
+                      <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
+                          idx === 0 ? 'bg-yellow-100 text-yellow-700' :
+                          idx === 1 ? 'bg-slate-200 text-slate-700' :
+                          idx === 2 ? 'bg-orange-100 text-orange-700' :
+                          'bg-blue-50 text-blue-600'
+                        }`}>
+                          {idx + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-800 text-sm truncate">{customer.name}</div>
+                          <div className="text-xs text-slate-500">{customer.invoiceCount} invoices • {formatWeight(customer.totalWeightGrams)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-blue-600">₹{customer.totalSpent.toLocaleString()}</div>
+                          <div className="text-xs text-slate-500">₹{Math.round(customer.totalSpent / customer.invoiceCount)}/avg</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Detailed Customer Insights */}
+              <div className="bg-white p-4 rounded-lg shadow-sm">
+                <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Purchase Details</h4>
+                <div className="space-y-4 max-h-96 overflow-y-auto">
+                  {stats.topCustomers.slice(0, 5).map((customer, idx) => {
+                    const topItems = Object.entries(customer.items)
+                      .map(([name, data]) => ({ name, ...data }))
+                      .sort((a, b) => b.amount - a.amount)
+                      .slice(0, 3);
+
+                    return (
+                      <div key={idx} className="border border-slate-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex-1">
+                            <h5 className="font-bold text-slate-900">{customer.name}</h5>
+                            <div className="flex gap-3 text-xs text-slate-500 mt-1">
+                              <span>📅 Last: {customer.lastPurchase}</span>
+                              <span>📊 {customer.invoiceCount} orders</span>
+                              <span>⚖️ {formatWeight(customer.totalWeightGrams)}</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg font-bold text-blue-600">₹{customer.totalSpent.toLocaleString()}</div>
+                            <div className="text-xs text-slate-500">Total Spent</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <div className="text-xs font-bold text-slate-600 mb-2 uppercase">Favorite Products</div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            {topItems.map((item, i) => (
+                              <div key={i} className="bg-slate-50 p-2 rounded">
+                                <div className="text-xs font-medium text-slate-700 truncate" title={item.name}>{item.name}</div>
+                                <div className="flex justify-between items-center mt-1">
+                                  <div className="text-xs font-bold text-slate-900">₹{item.amount}</div>
+                                  <div className="text-xs text-slate-600">⚖️ {formatWeight(item.weightGrams)}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

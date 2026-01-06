@@ -520,7 +520,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                       {idx + 1}. {item.name} <span className="text-slate-400 font-normal text-xs">{item.packing ? `(${item.packing})` : ''}</span>
                     </div>
                     <div className="text-slate-500 text-xs font-medium">
-                      Rate: ₹{item.rate} | {item.packing ? 'Pkt' : item.unit}
+                      Rate: ₹{item.rate} | {item.unit}
                     </div>
                   </div>
                   <button

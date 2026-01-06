@@ -80,21 +80,34 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
   const amountInWords = numberToWords(Math.round(totalAmount));
 
-  // Calculate total weight from packing
+  // Calculate total weight from quantity
   const totalWeightDisplay = React.useMemo(() => {
     const totalGrams = items.reduce((sum, item) => {
-      if (!item.packing) return sum;
-      const text = item.packing.toLowerCase().trim();
-      const match = text.match(/^(\d+(\.\d+)?)\s*(kg|gm|g|ltr|ml|l)/);
-
-      if (match) {
-        let value = parseFloat(match[1]);
-        const unit = match[3];
-        if (['kg', 'ltr', 'l'].includes(unit)) {
-          value *= 1000;
-        }
-        return sum + (value * item.quantity);
+      const qty = item.quantity;
+      const unit = item.unit.toLowerCase().trim();
+      
+      // If unit is weight (Kg, Gm, G), use quantity directly
+      if (['kg'].includes(unit)) {
+        return sum + (qty * 1000); // Convert to grams
+      } else if (['gm', 'g', 'gram', 'grams'].includes(unit)) {
+        return sum + qty;
       }
+      
+      // If unit is non-weight (Pkt, Box, etc.), multiply quantity by packing weight
+      if (item.packing) {
+        const text = item.packing.toLowerCase().trim();
+        const match = text.match(/^(\d+(\.\d+)?)\s*(kg|gm|g|ltr|ml|l)/);
+
+        if (match) {
+          let value = parseFloat(match[1]);
+          const packingUnit = match[3];
+          if (['kg', 'ltr', 'l'].includes(packingUnit)) {
+            value *= 1000; // Convert to grams/ml
+          }
+          return sum + (value * qty);
+        }
+      }
+      
       return sum;
     }, 0);
 
@@ -205,7 +218,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                   {item.packing || '-'}
                 </div>
                 <div className="w-16 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
-                  {item.quantity} {['Kg', 'Gm', 'G', 'Ltr', 'Ml', 'L'].includes(item.unit) ? '' : item.unit}
+                  {item.quantity} {item.unit}
                 </div>
                 <div className="w-20 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
                   {item.rate}
