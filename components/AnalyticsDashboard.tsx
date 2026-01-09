@@ -10,7 +10,11 @@ import {
   AlertCircle,
   Lightbulb,
   RefreshCw,
-  PieChart as PieIcon
+  PieChart as PieIcon,
+  TrendingDown,
+  Calendar,
+  Target,
+  Package
 } from 'lucide-react';
 
 interface AnalyticsDashboardProps {
@@ -24,6 +28,16 @@ interface AIAnalysisResult {
   top_performing_product_insight: string;
   customer_behavior_insight: string;
   actionable_tips: string[];
+  sales_forecast?: string;
+  growth_trends?: string;
+  seasonal_patterns?: string;
+  inventory_insights?: string;
+  customer_segments?: string;
+  forecast_revenue?: number;
+  growth_percentage?: number;
+  top_selling_days?: string[];
+  high_value_customer_count?: number;
+  low_stock_items?: string[];
 }
 
 const COLORS = ['#dc2626', '#ea580c', '#d97706', '#65a30d', '#059669', '#0891b2', '#2563eb', '#7c3aed'];
@@ -69,7 +83,15 @@ const SimpleBarChart = ({ data }: { data: { dateStr: string, revenue: number }[]
   );
 };
 
-const SimplePieChart = ({ data, showWeight }: { data: { name: string, value: number, weight?: number }[], showWeight?: boolean }) => {
+const SimplePieChart = ({
+  data,
+  showWeight,
+  showLegend = true
+}: {
+  data: { name: string; value: number; weight?: number }[];
+  showWeight?: boolean;
+  showLegend?: boolean;
+}) => {
   if (data.length === 0) return <div className="h-full flex items-center justify-center text-slate-400">No data</div>;
 
   const total = data.reduce((sum, d) => sum + d.value, 0);
@@ -85,7 +107,7 @@ const SimplePieChart = ({ data, showWeight }: { data: { name: string, value: num
   }).join(', ');
 
   return (
-    <div className="w-full flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8 py-1">
+    <div className="w-full flex flex-col md:flex-row items-start md:items-center justify-center gap-3 md:gap-8 py-1">
       {/* Pie */}
       <div
         className="w-28 h-28 md:w-40 md:h-40 rounded-full shadow-inner relative group flex-shrink-0"
@@ -100,24 +122,74 @@ const SimplePieChart = ({ data, showWeight }: { data: { name: string, value: num
       </div>
 
       {/* Legend */}
-      <div className="grid grid-cols-2 md:grid-cols-1 gap-x-4 gap-y-2 md:gap-2 w-full md:w-auto px-4">
-        {data.map((d, i) => (
-          <div key={i} className="flex items-center gap-2 text-[10px] md:text-xs">
-            <div className="w-2 md:w-3 h-2 md:h-3 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}></div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-slate-600 font-bold truncate" title={d.name}>{d.name}</span>
-              <span className="text-slate-400 font-medium whitespace-nowrap">₹{d.value}</span>
-              {showWeight && d.weight !== undefined && (
-                <span className="text-slate-500 font-medium text-[9px] md:text-[10px]">{formatWeight(d.weight)}</span>
-              )}
-            </div>
+      {showLegend && (
+        <div className="w-full md:w-auto px-2 md:px-4">
+          <div className="grid grid-cols-2 md:grid-cols-1 gap-x-3 gap-y-2 md:gap-2 w-full md:w-auto max-h-28 overflow-y-auto pr-1 md:max-h-none md:overflow-visible">
+            {data.map((d, i) => (
+              <div key={i} className="flex items-center gap-2 text-[10px] md:text-xs">
+                <div className="w-2 md:w-3 h-2 md:h-3 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}></div>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-slate-600 font-bold truncate" title={d.name}>{d.name}</span>
+                  <span className="text-slate-400 font-medium whitespace-nowrap">₹{d.value}</span>
+                  {showWeight && d.weight !== undefined && (
+                    <span className="text-slate-500 font-medium text-[9px] md:text-[10px]">{formatWeight(d.weight)}</span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
+      )}
+    </div>
+  );
+};
+// Metric Card Component for Visual Stats
+const MetricCard = ({ icon, title, value, subtitle, trend, color }: { 
+  icon: React.ReactNode, 
+  title: string, 
+  value: string | number, 
+  subtitle?: string,
+  trend?: 'up' | 'down' | 'neutral',
+  color: string 
+}) => (
+  <div className={`bg-gradient-to-br ${color} p-4 rounded-xl shadow-md border border-white/20`}>
+    <div className="flex items-start justify-between mb-2">
+      <div className="p-2 bg-white/20 rounded-lg">
+        {icon}
+      </div>
+      {trend && (
+        <div className={`flex items-center gap-1 text-xs font-bold ${
+          trend === 'up' ? 'text-green-300' : trend === 'down' ? 'text-red-300' : 'text-white/70'
+        }`}>
+          {trend === 'up' && <TrendingUp size={14} />}
+          {trend === 'down' && <TrendingDown size={14} />}
+        </div>
+      )}
+    </div>
+    <div className="text-2xl md:text-3xl font-bold text-white mb-1">{value}</div>
+    <div className="text-xs font-medium text-white/90">{title}</div>
+    {subtitle && <div className="text-xs text-white/70 mt-1">{subtitle}</div>}
+  </div>
+);
+
+// Progress Bar Component
+const ProgressBar = ({ label, value, max, color }: { label: string, value: number, max: number, color: string }) => {
+  const percentage = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-xs">
+        <span className="text-slate-600 font-medium truncate flex-1">{label}</span>
+        <span className="text-slate-900 font-bold ml-2">₹{value.toLocaleString()}</span>
+      </div>
+      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div 
+          className={`h-full ${color} transition-all duration-500`}
+          style={{ width: `${percentage}%` }}
+        ></div>
       </div>
     </div>
   );
 };
-
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices, products, customers }) => {
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(null);
@@ -128,6 +200,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
     const totalRevenue = invoices.reduce((sum, inv) => sum + (Number(inv.total) || 0), 0);
     const totalBills = invoices.length;
     const avgBillValue = totalBills > 0 ? totalRevenue / totalBills : 0;
+
+    // Total Weight Sold (in grams)
+    let totalWeightGramsSold = 0;
 
     // Product Frequency
     const productSales: Record<string, { amount: number; weightGrams: number }> = {};
@@ -143,11 +218,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
           // Calculate weight for this item
           const qty = item.quantity;
           const unit = item.unit.toLowerCase().trim();
+
+          let itemWeight = 0;
           
           if (['kg'].includes(unit)) {
-            productSales[item.name].weightGrams += qty * 1000;
+            itemWeight = qty * 1000;
+            productSales[item.name].weightGrams += itemWeight;
           } else if (['gm', 'g', 'gram', 'grams'].includes(unit)) {
-            productSales[item.name].weightGrams += qty;
+            itemWeight = qty;
+            productSales[item.name].weightGrams += itemWeight;
           } else if (item.packing) {
             // Non-weight unit, calculate from packing
             const text = item.packing.toLowerCase().trim();
@@ -158,9 +237,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
               if (['kg', 'ltr', 'l'].includes(packingUnit)) {
                 value *= 1000;
               }
-              productSales[item.name].weightGrams += value * qty;
+              itemWeight = value * qty;
+              productSales[item.name].weightGrams += itemWeight;
             }
           }
+
+          totalWeightGramsSold += itemWeight;
         });
       }
     });
@@ -332,6 +414,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       totalRevenue,
       totalBills,
       avgBillValue,
+      totalWeightGramsSold,
       topProductName: topProduct ? topProduct[0] : 'N/A',
       topProductValue: topProduct ? topProduct[1].amount : 0,
       chartDataRevenue,
@@ -379,11 +462,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       // 3. Initialize Gemini
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-      // 4. Call Model
+      // 4. Call Model with Enhanced Analysis
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: `
-          You are a business analyst assistant.
+          You are an advanced business intelligence analyst specializing in retail and sales analytics.
           
           Here are the key calculated metrics for the business:
           ${metricsData}
@@ -391,32 +474,54 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
           Here is the raw transaction data:
           ${promptData}
 
-          Please analyze this data, focusing specifically on:
-          1. Total Revenue performance.
-          2. The Volume of Bills generated.
-          3. The Average Bill Value and what it indicates about customer size.
-          4. The Top Selling Products and their impact.
+          Analyze the data and provide CONCISE insights (max 2 sentences each) with QUANTITATIVE DATA for visualization:
 
-          Provide a response in JSON format containing:
-          - "business_health": A summary paragraph evaluating the business performance based on the metrics provided.
-          - "top_performing_product_insight": Specific analysis on why the top product is successful.
-          - "customer_behavior_insight": Observations on customer buying patterns (frequency, location, ticket size).
-          - "actionable_tips": An array of 3 specific, data-driven tips to improve revenue or efficiency.
+          1. Business Health: One line summary + current status
+          2. Sales Forecast: Predict next 30-day revenue (numeric value) + confidence
+          3. Growth: Calculate percentage growth rate (numeric value)
+          4. Seasonal Patterns: Identify top 3 selling days/periods (as array)
+          5. Customer Segments: Count of high-value customers (numeric)
+          6. Product Performance: Brief insight on top product
+          7. Inventory: List 3 items needing attention (as array)
+          8. Actions: 3-5 specific recommendations
+
+          Provide response in JSON with SHORT text (1-2 sentences max) and NUMERIC values for charts:
+          - "business_health": One sentence status
+          - "sales_forecast": Brief forecast statement
+          - "forecast_revenue": Predicted revenue as number
+          - "growth_trends": One sentence growth summary
+          - "growth_percentage": Growth rate as number (e.g., 15.5 for 15.5%)
+          - "seasonal_patterns": One sentence pattern summary
+          - "top_selling_days": Array of 3 peak days/periods
+          - "customer_behavior_insight": One sentence behavior summary
+          - "customer_segments": One sentence segment summary
+          - "high_value_customer_count": Number of high-value customers
+          - "top_performing_product_insight": One sentence product insight
+          - "inventory_insights": One sentence inventory status
+          - "low_stock_items": Array of 3 items needing attention
+          - "actionable_tips": Array of 3-5 brief action items
         `,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              business_health: { type: Type.STRING, description: "Executive summary of business health metrics." },
-              top_performing_product_insight: { type: Type.STRING, description: "Analysis of product performance." },
-              customer_behavior_insight: { type: Type.STRING, description: "Analysis of customer segments and behavior." },
-              actionable_tips: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "3 strategic tips."
-              }
-            }
+              business_health: { type: Type.STRING },
+              sales_forecast: { type: Type.STRING },
+              forecast_revenue: { type: Type.NUMBER },
+              growth_trends: { type: Type.STRING },
+              growth_percentage: { type: Type.NUMBER },
+              seasonal_patterns: { type: Type.STRING },
+              top_selling_days: { type: Type.ARRAY, items: { type: Type.STRING } },
+              customer_behavior_insight: { type: Type.STRING },
+              customer_segments: { type: Type.STRING },
+              high_value_customer_count: { type: Type.NUMBER },
+              top_performing_product_insight: { type: Type.STRING },
+              inventory_insights: { type: Type.STRING },
+              low_stock_items: { type: Type.ARRAY, items: { type: Type.STRING } },
+              actionable_tips: { type: Type.ARRAY, items: { type: Type.STRING } }
+            },
+            required: ["business_health", "customer_behavior_insight", "top_performing_product_insight", "actionable_tips"]
           }
         }
       });
@@ -441,26 +546,28 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
     <div className="h-full flex flex-col overflow-hidden">
       <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <div className="p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-violet-50 to-fuchsia-50 flex justify-between items-center shrink-0">
-          <div className="flex-1">
-            <h2 className="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
-              <BarChart3 className="w-6 h-6 text-violet-600" />
-              Analytics Dashboard
-            </h2>
-            <p className="text-xs text-slate-500 mt-1">Real-time stats & AI-powered insights</p>
-          </div>
-          <div className="bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-200">
-            <div className="text-lg md:text-2xl font-bold text-violet-600">{invoices.length}</div>
-            <div className="text-[10px] text-slate-500 uppercase font-bold">Invoices</div>
+        <div className="p-3 md:p-5 border-b border-slate-200 bg-gradient-to-r from-violet-50 to-fuchsia-50 shrink-0">
+          <div className="flex justify-between items-center gap-3">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <BarChart3 className="w-5 h-5 md:w-6 md:h-6 text-violet-600 shrink-0" />
+              <div className="min-w-0">
+                <h2 className="text-base md:text-2xl font-bold text-slate-800 truncate">Analytics Dashboard</h2>
+                <p className="text-[10px] md:text-xs text-slate-500">Real-time insights</p>
+              </div>
+            </div>
+            <div className="bg-white px-2 md:px-3 py-1.5 md:py-2 rounded-lg shadow-sm border border-slate-200 shrink-0">
+              <div className="text-sm md:text-2xl font-bold text-violet-600">{invoices.length}</div>
+              <div className="text-[9px] md:text-[10px] text-slate-500 uppercase font-bold">Bills</div>
+            </div>
           </div>
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6">
-          <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto p-3 md:p-6 bg-slate-50">
+          <div className="space-y-4 md:space-y-6">
 
             {/* --- KPI Cards (Local Data) --- */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4">
               <div className="bg-gradient-to-br from-red-50 to-orange-50 p-4 md:p-5 rounded-lg shadow-sm border border-red-100 hover:shadow-md transition-shadow">
                 <div className="flex justify-between items-start mb-3">
                   <div className="p-2 bg-white rounded-lg text-red-600 shadow-sm"><Wallet size={20} /></div>
@@ -493,8 +600,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                   <div className="p-2 bg-white rounded-lg text-amber-600 shadow-sm"><Sparkles size={20} /></div>
                   <span className="text-xs font-bold text-amber-600 bg-amber-100 px-2 py-1 rounded-full">Top</span>
                 </div>
-                <div className="text-lg md:text-xl font-bold text-slate-900 truncate" title={stats.topProductName}>{stats.topProductName}</div>
-                <div className="text-xs text-slate-600 mt-1 font-medium">Best Selling Product</div>
+                <div className="text-lg md:text-xl font-bold text-slate-900">{((stats.totalWeightGramsSold || 0) / 1000).toFixed(2)} Kg</div>
+                <div className="text-xs text-slate-600 mt-1 font-medium">Total Kg Sold</div>
               </div>
             </div>
 
@@ -517,7 +624,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                   <PieIcon size={18} className="text-purple-600 md:w-5 md:h-5" />
                   <span>Top Products</span>
                 </h3>
-                <div className="h-64 md:h-64 w-full">
+                {/* Mobile: Pie + Bars side-by-side */}
+                <div className="md:hidden">
+                  <div className="grid grid-cols-[7rem_1fr] gap-2 items-start">
+                    <div className="flex justify-center pt-1">
+                      <SimplePieChart data={stats.chartDataProducts} showWeight={true} showLegend={false} />
+                    </div>
+                    <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                      {(() => {
+                        const maxVal = Math.max(...stats.chartDataProducts.map(d => d.value), 0);
+                        return stats.chartDataProducts.map((d) => (
+                          <ProgressBar key={d.name} label={d.name} value={d.value} max={maxVal} color="bg-purple-500" />
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Desktop: Pie + Legend */}
+                <div className="hidden md:block w-full min-h-[18rem] md:h-64">
                   <SimplePieChart data={stats.chartDataProducts} showWeight={true} />
                 </div>
               </div>
@@ -535,7 +660,25 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                 {/* Customer Revenue Distribution */}
                 <div className="bg-white p-4 rounded-lg shadow-sm">
                   <h4 className="font-bold text-slate-700 text-sm mb-3">Top Customers by Revenue</h4>
-                  <div className="h-48 md:h-64 w-full">
+                  {/* Mobile: Pie + Bars side-by-side */}
+                  <div className="md:hidden">
+                    <div className="grid grid-cols-[7rem_1fr] gap-2 items-start">
+                      <div className="flex justify-center pt-1">
+                        <SimplePieChart data={stats.chartDataCustomers} showLegend={false} />
+                      </div>
+                      <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                        {(() => {
+                          const maxVal = Math.max(...stats.chartDataCustomers.map(d => d.value), 0);
+                          return stats.chartDataCustomers.map((d) => (
+                            <ProgressBar key={d.name} label={d.name} value={d.value} max={maxVal} color="bg-blue-500" />
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Desktop: Pie + Legend */}
+                  <div className="hidden md:block w-full min-h-[16rem] md:h-64">
                     <SimplePieChart data={stats.chartDataCustomers} />
                   </div>
                 </div>
@@ -555,12 +698,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                           {idx + 1}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-slate-800 text-sm truncate">{customer.name}</div>
-                          <div className="text-xs text-slate-500">{customer.invoiceCount} invoices • {formatWeight(customer.totalWeightGrams)}</div>
+                          <div className="font-semibold text-slate-800 text-xs sm:text-sm truncate">{customer.name}</div>
+                          <div className="text-[11px] sm:text-xs text-slate-500">{customer.invoiceCount} invoices • {formatWeight(customer.totalWeightGrams)}</div>
                         </div>
                         <div className="text-right">
-                          <div className="font-bold text-blue-600">₹{customer.totalSpent.toLocaleString()}</div>
-                          <div className="text-xs text-slate-500">₹{Math.round(customer.totalSpent / customer.invoiceCount)}/avg</div>
+                          <div className="font-bold text-blue-600 text-xs sm:text-sm">₹{customer.totalSpent.toLocaleString()}</div>
+                          <div className="text-[11px] sm:text-xs text-slate-500">₹{Math.round(customer.totalSpent / customer.invoiceCount)}/avg</div>
                         </div>
                       </div>
                     ))}
@@ -580,30 +723,30 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
                     return (
                       <div key={idx} className="border border-slate-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1">
-                            <h5 className="font-bold text-slate-900">{customer.name}</h5>
-                            <div className="flex gap-3 text-xs text-slate-500 mt-1">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 mb-2">
+                          <div className="flex-1 min-w-0">
+                            <h5 className="font-bold text-slate-900 text-sm sm:text-base">{customer.name}</h5>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs text-slate-500 mt-1">
                               <span>📅 Last: {customer.lastPurchase}</span>
                               <span>📊 {customer.invoiceCount} orders</span>
                               <span>⚖️ {formatWeight(customer.totalWeightGrams)}</span>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <div className="text-lg font-bold text-blue-600">₹{customer.totalSpent.toLocaleString()}</div>
-                            <div className="text-xs text-slate-500">Total Spent</div>
+                          <div className="text-left sm:text-right">
+                            <div className="text-base sm:text-lg font-bold text-blue-600">₹{customer.totalSpent.toLocaleString()}</div>
+                            <div className="text-[11px] sm:text-xs text-slate-500">Total Spent</div>
                           </div>
                         </div>
 
                         <div className="mt-3 pt-3 border-t border-slate-100">
-                          <div className="text-xs font-bold text-slate-600 mb-2 uppercase">Favorite Products</div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          <div className="text-[11px] sm:text-xs font-bold text-slate-600 mb-2 uppercase">Favorite Products</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                             {topItems.map((item, i) => (
                               <div key={i} className="bg-slate-50 p-2 rounded">
-                                <div className="text-xs font-medium text-slate-700 truncate" title={item.name}>{item.name}</div>
-                                <div className="flex justify-between items-center mt-1">
-                                  <div className="text-xs font-bold text-slate-900">₹{item.amount}</div>
-                                  <div className="text-xs text-slate-600">⚖️ {formatWeight(item.weightGrams)}</div>
+                                <div className="text-[11px] sm:text-xs font-medium text-slate-700 truncate" title={item.name}>{item.name}</div>
+                                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 mt-1">
+                                  <div className="text-[11px] sm:text-xs font-bold text-slate-900">₹{item.amount}</div>
+                                  <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">⚖️ {formatWeight(item.weightGrams)}</div>
                                 </div>
                               </div>
                             ))}
@@ -617,77 +760,182 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
             </div>
 
             {/* --- AI Section --- */}
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl p-4 md:p-6 text-white shadow-lg">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl p-3 md:p-6 text-white shadow-lg">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
                 <div className="flex-1">
-                  <h3 className="text-lg md:text-xl font-bold flex items-center gap-2">
-                    <Sparkles className="text-yellow-400 fill-yellow-400" size={20} />
+                  <h3 className="text-base md:text-xl font-bold flex items-center gap-2">
+                    <Sparkles className="text-yellow-400 fill-yellow-400" size={18} />
                     AI Business Analyst
                   </h3>
-                  <p className="text-slate-400 text-xs md:text-sm mt-1">
-                    Generate insights using Google Gemini AI
+                  <p className="text-slate-400 text-[10px] md:text-sm mt-1">
+                    Visual insights & forecasting
                   </p>
                 </div>
 
                 <button
                   onClick={generateInsights}
                   disabled={loading}
-                  className="w-full md:w-auto bg-white text-slate-900 hover:bg-slate-100 font-bold py-3 px-6 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto bg-white text-slate-900 hover:bg-slate-100 font-bold py-2 md:py-3 px-4 md:px-6 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all disabled:opacity-70 disabled:cursor-not-allowed text-sm"
                 >
-                  {loading ? <RefreshCw className="animate-spin" size={18} /> : <Lightbulb size={18} />}
-                  <span className="text-sm md:text-base">{loading ? 'Analyzing...' : 'Generate Report'}</span>
+                  {loading ? <RefreshCw className="animate-spin" size={16} /> : <Lightbulb size={16} />}
+                  <span>{loading ? 'Analyzing...' : 'Generate Report'}</span>
                 </button>
               </div>
 
               {error && (
-                <div className="bg-red-500/20 border border-red-500/50 p-4 rounded-lg flex items-center gap-3 text-red-200 mb-4">
-                  <AlertCircle size={20} />
-                  {error}
+                <div className="bg-red-500/20 border border-red-500/50 p-3 rounded-lg flex items-center gap-2 text-red-200 mb-4 text-xs md:text-sm">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span className="break-words">{error}</span>
                 </div>
               )}
 
               {analysis && !loading && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                  {/* Health & Customers */}
-                  <div className="space-y-4">
-                    <div className="bg-white/10 p-4 rounded-lg backdrop-blur-sm border border-white/10">
-                      <h4 className="font-bold text-green-400 mb-2 text-xs md:text-sm uppercase tracking-wider">Business Health</h4>
-                      <p className="text-slate-200 text-sm leading-relaxed">{analysis.business_health}</p>
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                  {/* Key Metrics Cards - Mobile Optimized */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+                    {/* Forecast Revenue */}
+                    {analysis.forecast_revenue !== undefined && (
+                      <MetricCard
+                        icon={<Target size={20} className="text-white" />}
+                        title="30-Day Forecast"
+                        value={`₹${Math.round(analysis.forecast_revenue).toLocaleString()}`}
+                        trend="up"
+                        color="from-blue-500 to-blue-600"
+                      />
+                    )}
+                    
+                    {/* Growth Rate */}
+                    {analysis.growth_percentage !== undefined && (
+                      <MetricCard
+                        icon={<TrendingUp size={20} className="text-white" />}
+                        title="Growth Rate"
+                        value={`${analysis.growth_percentage > 0 ? '+' : ''}${analysis.growth_percentage.toFixed(1)}%`}
+                        trend={analysis.growth_percentage > 0 ? 'up' : 'down'}
+                        color="from-green-500 to-green-600"
+                      />
+                    )}
+
+                    {/* High Value Customers */}
+                    {analysis.high_value_customer_count !== undefined && (
+                      <MetricCard
+                        icon={<Users size={20} className="text-white" />}
+                        title="VIP Customers"
+                        value={analysis.high_value_customer_count}
+                        subtitle="High spenders"
+                        color="from-purple-500 to-purple-600"
+                      />
+                    )}
+
+                    {/* Business Status */}
+                    <MetricCard
+                      icon={<Sparkles size={20} className="text-white" />}
+                      title="Business Health"
+                      value="Active"
+                      subtitle={`${stats.totalBills} orders`}
+                      color="from-orange-500 to-orange-600"
+                    />
+                  </div>
+
+                  {/* Insights Grid - Better Mobile Layout */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                    {/* Sales Forecast */}
+                    {analysis.sales_forecast && (
+                      <div className="bg-white/10 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-white/10">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Calendar size={14} className="text-cyan-400" />
+                          <h4 className="font-bold text-cyan-400 text-xs uppercase tracking-wider">Sales Forecast</h4>
+                        </div>
+                        <p className="text-slate-200 text-xs leading-relaxed">{analysis.sales_forecast}</p>
+                      </div>
+                    )}
+
+                    {/* Growth Trends */}
+                    {analysis.growth_trends && (
+                      <div className="bg-white/10 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-white/10">
+                        <div className="flex items-center gap-2 mb-2">
+                          <TrendingUp size={14} className="text-green-400" />
+                          <h4 className="font-bold text-green-400 text-xs uppercase tracking-wider">Growth Trends</h4>
+                        </div>
+                        <p className="text-slate-200 text-xs leading-relaxed">{analysis.growth_trends}</p>
+                      </div>
+                    )}
+
+                    {/* Customer Insights */}
+                    <div className="bg-white/10 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-white/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Users size={14} className="text-blue-400" />
+                        <h4 className="font-bold text-blue-400 text-xs uppercase tracking-wider">Customer Insights</h4>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{analysis.customer_behavior_insight}</p>
                     </div>
-                    <div className="bg-white/10 p-4 rounded-lg backdrop-blur-sm border border-white/10">
-                      <h4 className="font-bold text-blue-400 mb-2 text-xs md:text-sm uppercase tracking-wider">Customer Trends</h4>
-                      <p className="text-slate-200 text-sm leading-relaxed">{analysis.customer_behavior_insight}</p>
+
+                    {/* Product Performance */}
+                    <div className="bg-white/10 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-white/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Package size={14} className="text-orange-400" />
+                        <h4 className="font-bold text-orange-400 text-xs uppercase tracking-wider">Top Product</h4>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{analysis.top_performing_product_insight}</p>
                     </div>
                   </div>
 
-                  {/* Products & Tips */}
-                  <div className="space-y-4">
-                    <div className="bg-white/10 p-4 rounded-lg backdrop-blur-sm border border-white/10">
-                      <h4 className="font-bold text-orange-400 mb-2 text-xs md:text-sm uppercase tracking-wider">Product Insight</h4>
-                      <p className="text-slate-200 text-sm leading-relaxed">{analysis.top_performing_product_insight}</p>
-                    </div>
+                  {/* Peak Days & Low Stock - Visual Lists */}
+                  {(analysis.top_selling_days?.length || analysis.low_stock_items?.length) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                      {/* Peak Selling Days */}
+                      {analysis.top_selling_days && analysis.top_selling_days.length > 0 && (
+                        <div className="bg-white/10 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-white/10">
+                          <h4 className="font-bold text-pink-400 mb-3 text-xs uppercase tracking-wider">🔥 Peak Selling Periods</h4>
+                          <div className="space-y-2">
+                            {analysis.top_selling_days.map((day, idx) => (
+                              <div key={idx} className="flex items-center gap-2 bg-white/5 p-2 rounded">
+                                <span className="bg-pink-500/40 text-pink-200 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">{idx + 1}</span>
+                                <span className="text-slate-200 text-xs">{day}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                    <div className="bg-yellow-500/20 p-4 rounded-lg backdrop-blur-sm border border-yellow-500/30">
-                      <h4 className="font-bold text-yellow-400 mb-3 text-xs md:text-sm uppercase tracking-wider flex items-center gap-2">
-                        <Lightbulb size={16} /> Recommended Actions
-                      </h4>
-                      <ul className="space-y-2">
-                        {analysis.actionable_tips.map((tip, idx) => (
-                          <li key={idx} className="flex items-start gap-2 text-xs md:text-sm text-yellow-100">
-                            <span className="bg-yellow-500/40 text-yellow-200 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">{idx + 1}</span>
-                            <span>{tip}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      {/* Low Stock Items */}
+                      {analysis.low_stock_items && analysis.low_stock_items.length > 0 && (
+                        <div className="bg-white/10 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-white/10">
+                          <h4 className="font-bold text-red-400 mb-3 text-xs uppercase tracking-wider">⚠️ Items Need Attention</h4>
+                          <div className="space-y-2">
+                            {analysis.low_stock_items.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-2 bg-white/5 p-2 rounded">
+                                <AlertCircle size={14} className="text-red-400 shrink-0" />
+                                <span className="text-slate-200 text-xs truncate">{item}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Recommendations - Compact & Mobile-Friendly */}
+                  <div className="bg-gradient-to-br from-yellow-500/20 to-orange-500/20 p-3 md:p-4 rounded-lg backdrop-blur-sm border border-yellow-500/30">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Lightbulb size={16} className="text-yellow-400 shrink-0" />
+                      <h4 className="font-bold text-yellow-400 text-xs uppercase tracking-wider">Action Plan</h4>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {analysis.actionable_tips.map((tip, idx) => (
+                        <div key={idx} className="flex items-start gap-2 bg-white/5 p-2 rounded">
+                          <span className="bg-yellow-500/40 text-yellow-200 min-w-[20px] h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">{idx + 1}</span>
+                          <span className="text-yellow-100 text-xs leading-tight">{tip}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
               )}
 
               {!analysis && !loading && !error && (
-                <div className="text-center py-8 text-slate-400 border-2 border-dashed border-slate-700 rounded-lg">
+                <div className="text-center py-12 md:py-16 text-slate-400 border-2 border-dashed border-slate-700 rounded-lg">
                   <Sparkles className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <div className="text-sm">Click the button above to analyze your invoices</div>
+                  <div className="text-xs md:text-sm">Click "Generate Report" to analyze your sales data</div>
                 </div>
               )}
             </div>
