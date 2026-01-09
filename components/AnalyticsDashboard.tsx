@@ -173,13 +173,30 @@ const MetricCard = ({ icon, title, value, subtitle, trend, color }: {
 );
 
 // Progress Bar Component
-const ProgressBar = ({ label, value, max, color }: { label: string, value: number, max: number, color: string }) => {
+const ProgressBar = ({
+  label,
+  value,
+  max,
+  color,
+  valuePrefix = '₹',
+  meta
+}: {
+  label: string;
+  value: number;
+  max: number;
+  color: string;
+  valuePrefix?: string;
+  meta?: string;
+}) => {
   const percentage = max > 0 ? (value / max) * 100 : 0;
   return (
     <div className="space-y-1">
-      <div className="flex justify-between text-xs">
+      <div className="flex justify-between items-start text-xs gap-2">
         <span className="text-slate-600 font-medium truncate flex-1">{label}</span>
-        <span className="text-slate-900 font-bold ml-2">₹{value.toLocaleString()}</span>
+        <div className="text-right flex flex-col items-end">
+          <span className="text-slate-900 font-bold whitespace-nowrap">{valuePrefix}{value.toLocaleString()}</span>
+          {meta && <span className="text-[10px] text-slate-500 whitespace-nowrap">{meta}</span>}
+        </div>
       </div>
       <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
         <div 
@@ -634,7 +651,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                       {(() => {
                         const maxVal = Math.max(...stats.chartDataProducts.map(d => d.value), 0);
                         return stats.chartDataProducts.map((d) => (
-                          <ProgressBar key={d.name} label={d.name} value={d.value} max={maxVal} color="bg-purple-500" />
+                          <ProgressBar
+                            key={d.name}
+                            label={d.name}
+                            value={d.value}
+                            max={maxVal}
+                            color="bg-purple-500"
+                            meta={(d.weight ?? 0) > 0 ? `${((d.weight ?? 0) / 1000).toFixed(2)} Kg` : '-'}
+                          />
                         ));
                       })()}
                     </div>
