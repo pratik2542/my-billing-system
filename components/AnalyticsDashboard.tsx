@@ -337,11 +337,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       }
     });
 
-    // Top customers by revenue
+    // Top customers by revenue (all customers, sorted)
     const topCustomers = Object.entries(customerData)
       .map(([name, data]) => ({ name, ...data }))
-      .sort((a, b) => b.totalSpent - a.totalSpent)
-      .slice(0, 10);
+      .sort((a, b) => b.totalSpent - a.totalSpent);
 
     // Customer frequency chart data (top 5)
     const chartDataCustomers = topCustomers.slice(0, 5).map(c => ({
@@ -711,7 +710,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                 <div className="bg-white p-4 rounded-lg shadow-sm">
                   <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Leaderboard</h4>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {stats.topCustomers.slice(0, 8).map((customer, idx) => (
+                    {stats.topCustomers.map((customer, idx) => (
                       <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
                           idx === 0 ? 'bg-yellow-100 text-yellow-700' :
@@ -739,7 +738,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
               <div className="bg-white p-4 rounded-lg shadow-sm">
                 <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Purchase Details</h4>
                 <div className="space-y-4 max-h-96 overflow-y-auto">
-                  {stats.topCustomers.slice(0, 5).map((customer, idx) => {
+                  {stats.topCustomers.map((customer, idx) => {
                     const topItems = Object.entries(customer.items)
                       .map(([name, data]) => ({ name, ...data }))
                       .sort((a, b) => b.amount - a.amount)
