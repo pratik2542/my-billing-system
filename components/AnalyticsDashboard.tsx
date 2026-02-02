@@ -42,22 +42,22 @@ interface AIAnalysisResult {
 
 type AIChartSpec =
   | {
-      type: 'bar';
-      title: string;
-      data: { dateStr: string; revenue: number }[];
-    }
+    type: 'bar';
+    title: string;
+    data: { dateStr: string; revenue: number }[];
+  }
   | {
-      type: 'pie';
-      title: string;
-      data: { name: string; value: number; weight?: number }[];
-      showWeight?: boolean;
-    }
+    type: 'pie';
+    title: string;
+    data: { name: string; value: number; weight?: number }[];
+    showWeight?: boolean;
+  }
   | {
-      type: 'progress';
-      title: string;
-      valuePrefix?: string;
-      bars: { label: string; value: number; meta?: string }[];
-    };
+    type: 'progress';
+    title: string;
+    valuePrefix?: string;
+    bars: { label: string; value: number; meta?: string }[];
+  };
 
 type AIQAResult = {
   language: 'en' | 'gu';
@@ -220,24 +220,26 @@ const SimpleBarChart = ({ data }: { data: { dateStr: string, revenue: number }[]
   const maxVal = Math.max(...data.map(d => d.revenue));
 
   return (
-    <div className="h-full w-full flex items-end justify-between gap-2 pt-6 pb-6 px-2">
-      {data.map((d, i) => {
-        const heightPercent = maxVal > 0 ? (d.revenue / maxVal) * 100 : 0;
-        return (
-          <div key={i} className="flex-1 flex flex-col items-center gap-2 group relative h-full justify-end">
-            {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap z-10 pointer-events-none">
-              {d.dateStr}: {formatINRFull(d.revenue)}
-            </div>
+    <div className="h-full w-full overflow-x-auto pb-2">
+      <div className="h-full flex items-end justify-between gap-2 pt-6 px-2 min-w-[300px] md:min-w-0">
+        {data.map((d, i) => {
+          const heightPercent = maxVal > 0 ? (d.revenue / maxVal) * 100 : 0;
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center gap-2 group relative h-full justify-end min-w-[20px]">
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap z-10 pointer-events-none left-1/2 -translate-x-1/2">
+                {d.dateStr}: {formatINRFull(d.revenue)}
+              </div>
 
-            <div
-              className="w-full bg-red-500 rounded-t hover:bg-red-600 transition-all relative"
-              style={{ height: `${heightPercent}%`, minHeight: '4px' }}
-            ></div>
-            <div className="text-[10px] text-slate-500 truncate w-full text-center">{d.dateStr.split('/')[0]}</div>
-          </div>
-        );
-      })}
+              <div
+                className="w-full bg-red-500 rounded-t hover:bg-red-600 transition-all relative"
+                style={{ height: `${heightPercent}%`, minHeight: '4px' }}
+              ></div>
+              <div className="text-[10px] text-slate-500 truncate w-full text-center">{d.dateStr.split('/')[0]}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -307,13 +309,13 @@ const SimplePieChart = ({
   );
 };
 // Metric Card Component for Visual Stats
-const MetricCard = ({ icon, title, value, subtitle, trend, color }: { 
-  icon: React.ReactNode, 
-  title: string, 
-  value: string | number, 
+const MetricCard = ({ icon, title, value, subtitle, trend, color }: {
+  icon: React.ReactNode,
+  title: string,
+  value: string | number,
   subtitle?: string,
   trend?: 'up' | 'down' | 'neutral',
-  color: string 
+  color: string
 }) => (
   <div className={`bg-gradient-to-br ${color} p-4 rounded-xl shadow-md border border-white/20`}>
     <div className="flex items-start justify-between mb-2">
@@ -321,9 +323,8 @@ const MetricCard = ({ icon, title, value, subtitle, trend, color }: {
         {icon}
       </div>
       {trend && (
-        <div className={`flex items-center gap-1 text-xs font-bold ${
-          trend === 'up' ? 'text-green-300' : trend === 'down' ? 'text-red-300' : 'text-white/70'
-        }`}>
+        <div className={`flex items-center gap-1 text-xs font-bold ${trend === 'up' ? 'text-green-300' : trend === 'down' ? 'text-red-300' : 'text-white/70'
+          }`}>
           {trend === 'up' && <TrendingUp size={14} />}
           {trend === 'down' && <TrendingDown size={14} />}
         </div>
@@ -364,7 +365,7 @@ const ProgressBar = ({
         </div>
       </div>
       <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-        <div 
+        <div
           className={`h-full ${color} transition-all duration-500`}
           style={{ width: `${percentage}%` }}
         ></div>
@@ -373,7 +374,11 @@ const ProgressBar = ({
   );
 };
 export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices, products, customers }) => {
-  const [revenueRange, setRevenueRange] = useState<RevenueRange>('month');
+  // State for global filters
+  const [timeFilter, setTimeFilter] = useState<string>('month');
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
+
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(null);
   const [error, setError] = useState<string>('');
@@ -385,10 +390,87 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
 
+  // --- Date Parsing Helper ---
+  const parseInvoiceDate = (dateStr: string): number => {
+    let timestamp = 0;
+    if (!dateStr) return 0;
+
+    // Try DD/MM/YYYY
+    if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        const [d, m, y] = parts.map(s => parseInt(s.trim(), 10));
+        if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+          timestamp = new Date(y, m - 1, d).getTime();
+        }
+      }
+    }
+    // Try YYYY-MM-DD
+    else if (dateStr.includes('-')) {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        if (parts[0].trim().length === 4) {
+          const [y, m, d] = parts.map(s => parseInt(s.trim(), 10));
+          timestamp = new Date(y, m - 1, d).getTime();
+        } else {
+          const [d, m, y] = parts.map(s => parseInt(s.trim(), 10));
+          timestamp = new Date(y, m - 1, d).getTime();
+        }
+      }
+    }
+
+    if (timestamp === 0 || isNaN(timestamp)) {
+      const parsed = Date.parse(dateStr);
+      if (!isNaN(parsed)) timestamp = parsed;
+    }
+    return timestamp;
+  };
+
+  // --- Filtering Logic ---
+  const filteredInvoices = useMemo(() => {
+    if (timeFilter === 'all') return invoices;
+    if (timeFilter === 'prediction') return [];
+
+    const now = new Date();
+    let start = 0;
+    let end = Number.MAX_SAFE_INTEGER;
+
+    switch (timeFilter) {
+      case 'month': // This Month
+        start = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+        end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).getTime();
+        break;
+      case 'last-month':
+        start = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+        end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999).getTime();
+        break;
+      case 'year': // This Year
+        start = new Date(now.getFullYear(), 0, 1).getTime();
+        end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999).getTime();
+        break;
+      case 'last-year':
+        start = new Date(now.getFullYear() - 1, 0, 1).getTime();
+        end = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999).getTime();
+        break;
+      case 'custom':
+        if (customStart) start = new Date(customStart).getTime();
+        if (customEnd) end = new Date(customEnd).setHours(23, 59, 59, 999);
+        break;
+      default:
+        break;
+    }
+
+    return invoices.filter(inv => {
+      const ts = parseInvoiceDate(inv.date);
+      return ts >= start && ts <= end;
+    });
+  }, [invoices, timeFilter, customStart, customEnd]);
+
   // --- Local Calculations (Instant) ---
   const stats = useMemo(() => {
-    const totalRevenue = invoices.reduce((sum, inv) => sum + (Number(inv.total) || 0), 0);
-    const totalBills = invoices.length;
+    const currentInvoices = filteredInvoices;
+    const totalRevenue = currentInvoices.reduce((sum, inv) => sum + (Number(inv.total) || 0), 0);
+    const totalBills = currentInvoices.length;
     const avgBillValue = totalBills > 0 ? totalRevenue / totalBills : 0;
 
     // Total Weight Sold (in grams)
@@ -396,7 +478,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
     // Product Frequency
     const productSales: Record<string, { amount: number; weightGrams: number }> = {};
-    invoices.forEach(inv => {
+    currentInvoices.forEach(inv => {
       if (inv.items && Array.isArray(inv.items)) {
         inv.items.forEach(item => {
           const amt = Number(item.amount) || 0;
@@ -410,7 +492,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
           const unit = item.unit.toLowerCase().trim();
 
           let itemWeight = 0;
-          
+
           if (['kg'].includes(unit)) {
             itemWeight = qty * 1000;
             productSales[item.name].weightGrams += itemWeight;
@@ -448,7 +530,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       totalWeightGrams: number;
     }> = {};
 
-    invoices.forEach(inv => {
+    currentInvoices.forEach(inv => {
       const customer = inv.customerName;
       if (!customerData[customer]) {
         customerData[customer] = {
@@ -462,7 +544,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
       customerData[customer].totalSpent += Number(inv.total) || 0;
       customerData[customer].invoiceCount += 1;
-      
+
       // Track last purchase date
       const currentDate = inv.date;
       const existingDate = customerData[customer].lastPurchase;
@@ -484,7 +566,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
           const qty = item.quantity;
           const unit = item.unit.toLowerCase().trim();
           let itemWeight = 0;
-          
+
           if (['kg'].includes(unit)) {
             itemWeight = qty * 1000;
             customerData[customer].totalWeightGrams += itemWeight;
@@ -504,7 +586,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
               customerData[customer].totalWeightGrams += itemWeight;
             }
           }
-          
+
           customerData[customer].items[item.name].weightGrams += itemWeight;
         });
       }
@@ -536,7 +618,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
     // 1. Daily Revenue (Last 7 days or all time)
     // We parse DD/MM/YYYY manually, but also handle other formats robustly
     const salesByDate: Record<string, number> = {};
-    invoices.forEach(inv => {
+    currentInvoices.forEach(inv => {
       if (inv.date) {
         // Ensure total is a number
         const amount = Number(inv.total) || 0;
@@ -544,46 +626,9 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       }
     });
 
-    console.log("Analytics: Raw Sales Data", salesByDate);
-
     const chartDataRevenueAll = Object.entries(salesByDate)
       .map(([date, total]) => {
-        let timestamp = 0;
-
-        // Try DD/MM/YYYY (e.g. 30/12/2025)
-        if (date.includes('/')) {
-          const parts = date.split('/');
-          if (parts.length === 3) {
-            const [d, m, y] = parts.map(s => parseInt(s.trim(), 10));
-            if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
-              timestamp = new Date(y, m - 1, d).getTime();
-            }
-          }
-        }
-        // Try YYYY-MM-DD (e.g. 2025-12-30)
-        else if (date.includes('-')) {
-          const parts = date.split('-');
-          if (parts.length === 3) {
-            // Check if first part is year (4 digits)
-            if (parts[0].trim().length === 4) {
-              const [y, m, d] = parts.map(s => parseInt(s.trim(), 10));
-              timestamp = new Date(y, m - 1, d).getTime();
-            } else {
-              // Assume DD-MM-YYYY
-              const [d, m, y] = parts.map(s => parseInt(s.trim(), 10));
-              timestamp = new Date(y, m - 1, d).getTime();
-            }
-          }
-        }
-
-        // Fallback to standard Date parsing if manual parsing failed
-        if (timestamp === 0 || isNaN(timestamp)) {
-          const parsed = Date.parse(date);
-          if (!isNaN(parsed)) {
-            timestamp = parsed;
-          }
-        }
-
+        const timestamp = parseInvoiceDate(date);
         return {
           dateStr: date,
           timestamp: isNaN(timestamp) ? 0 : timestamp,
@@ -591,17 +636,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
         };
       })
       .filter(item => {
-        if (item.timestamp <= 0) console.warn("Analytics: Invalid date filtered out:", item.dateStr);
         return item.timestamp > 0;
       }) // Remove invalid dates
       .sort((a, b) => a.timestamp - b.timestamp);
 
-    console.log("Analytics: Chart Data", chartDataRevenueAll);
-
     // 2. Product Distribution (Top 5)
     const chartDataProducts = Object.entries(productSales)
-      .map(([name, data]) => ({ 
-        name, 
+      .map(([name, data]) => ({
+        name,
         value: data.amount,
         weight: data.weightGrams
       }))
@@ -627,16 +669,35 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       customerData,
       productSales
     };
-  }, [invoices]);
+  }, [filteredInvoices]);
 
-  const chartDataRevenue = useMemo(
-    () => getRevenueChartData(stats.chartDataRevenueAll, revenueRange),
-    [stats.chartDataRevenueAll, revenueRange]
-  );
+  const chartDataRevenue = useMemo(() => {
+    // Determine aggregation based on filter
+    const items = stats.chartDataRevenueAll;
+
+    // For Year views (yearly or all time), show Monthly or Yearly
+    if (timeFilter === 'year' || timeFilter === 'last-year') {
+      const year = timeFilter === 'year' ? new Date().getFullYear() : new Date().getFullYear() - 1;
+      return aggregateMonthlyWithFill(items, year);
+    }
+
+    if (timeFilter === 'all') {
+      return aggregateYearlyWithFill(items);
+    }
+
+    // For Month/Custom/Short periods, show Daily
+    return items.map(i => ({ dateStr: formatDayLabel(i.timestamp), revenue: i.revenue }));
+
+  }, [stats.chartDataRevenueAll, timeFilter]);
 
   // --- AI Analysis ---
-  const generateInsights = async () => {
-    if (invoices.length === 0) {
+  const generateInsights = async (isPredictionMode = false) => {
+    // If prediction mode, we analyze ALL data (or last year) to forecast future
+    // If not prediction mode, analyze currently filtered data
+    const useGlobalData = isPredictionMode || timeFilter === 'prediction';
+    const dataToAnalyze = useGlobalData ? invoices : filteredInvoices;
+
+    if (dataToAnalyze.length === 0) {
       setError("Not enough data to generate insights. Create some bills first.");
       return;
     }
@@ -646,8 +707,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
     try {
       // 1. Prepare Data Summary for AI
-      // We include specific items to allow analysis of what sells together
-      const salesSummary = invoices.map(inv => ({
+      const salesSummary = dataToAnalyze.slice(-300).map(inv => ({
         date: inv.date,
         total: inv.total,
         customer: inv.customerName,
@@ -656,7 +716,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       }));
 
       // 2. Prepare Calculated Metrics for Context
-      // LLMs are better at analysis when provided with pre-calculated aggregates for accuracy
       const metricsContext = {
         total_revenue: stats.totalRevenue,
         number_of_bills: stats.totalBills,
@@ -676,39 +735,34 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 
       // 4. Call Model with Enhanced Analysis
+      const predictionPrompt = (isPredictionMode || timeFilter === 'prediction') ?
+        "FOCUS HEAVILY ON PREDICTING NEXT MONTH'S REVENUE AND TRENDS based on historical data. IGNORE the fact that future data is missing." : "";
+
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: `
-          You are an advanced business intelligence analyst specializing in retail and sales analytics.
+          You are an advanced business intelligence analyst.
+          ${predictionPrompt}
           
-          Here are the key calculated metrics for the business:
+          Metrics:
           ${metricsData}
 
-          Here is the raw transaction data:
+          Raw Data (Subset):
           ${promptData}
 
-          Analyze the data and provide CONCISE insights (max 2 sentences each) with QUANTITATIVE DATA for visualization:
-
-          1. Business Health: One line summary + current status
-          2. Sales Forecast: Predict next 30-day revenue (numeric value) + confidence
-          3. Growth: Calculate percentage growth rate (numeric value)
-          4. Seasonal Patterns: Identify top 3 selling days/periods (as array)
-          5. Customer Segments: Count of high-value customers (numeric)
-          6. Product Performance: Brief insight on top product
-          7. Inventory: List 3 items needing attention (as array)
-          8. Actions: 3-5 specific recommendations
-
-          Provide response in JSON with SHORT text (1-2 sentences max) and NUMERIC values for charts:
+          Analyze the data and provide CONCISE insights.
+          
+          Provide response in JSON:
           - "business_health": One sentence status
-          - "sales_forecast": Brief forecast statement
-          - "forecast_revenue": Predicted revenue as number
+          - "sales_forecast": Brief forecast
+          - "forecast_revenue": Predicted revenue (numeric)
           - "growth_trends": One sentence growth summary
-          - "growth_percentage": Growth rate as number (e.g., 15.5 for 15.5%)
+          - "growth_percentage": Growth rate (numeric)
           - "seasonal_patterns": One sentence pattern summary
-          - "top_selling_days": Array of 3 peak days/periods
+          - "top_selling_days": Array of 3 peak days
           - "customer_behavior_insight": One sentence behavior summary
           - "customer_segments": One sentence segment summary
-          - "high_value_customer_count": Number of high-value customers
+          - "high_value_customer_count": Number of top customers
           - "top_performing_product_insight": One sentence product insight
           - "inventory_insights": One sentence inventory status
           - "low_stock_items": Array of 3 items needing attention
@@ -754,6 +808,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       setLoading(false);
     }
   };
+
+  // Trigger analysis automatically when switching to Prediction mode
+  useMemo(() => {
+    if (timeFilter === 'prediction') {
+      generateInsights(true);
+    }
+  }, [timeFilter]);
 
   const askBillsQuestion = async () => {
     const question = qaInput.trim();
@@ -804,10 +865,10 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
         top_customers_by_revenue: stats.chartDataCustomers
       };
 
-            // Prepare chat history for context
-            const chatHistory = chat.slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
+      // Prepare chat history for context
+      const chatHistory = chat.slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
 
-            const response = await ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: `
       You are a billing analytics assistant.
@@ -929,6 +990,50 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-3 md:p-6 bg-slate-50">
           <div className="space-y-4 md:space-y-6">
+            {/* --- Global Filter Bar --- */}
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white p-3 md:p-4 rounded-lg border border-slate-200 shadow-sm sticky top-0 z-10">
+              <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                {[
+                  { id: 'month', label: 'This Month' },
+                  { id: 'last-month', label: 'Last Month' },
+                  { id: 'prediction', label: 'Next Month Prediction' },
+                  { id: 'year', label: 'This Year' },
+                  { id: 'last-year', label: 'Last Year' },
+                  { id: 'all', label: 'All Time' },
+                  { id: 'custom', label: 'Date Selection' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setTimeFilter(opt.id)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-full transition-all ${timeFilter === opt.id
+                      ? 'bg-violet-600 text-white shadow-md ring-2 ring-violet-100'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-transparent'
+                      }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {timeFilter === 'custom' && (
+                <div className="flex items-center gap-2 w-full md:w-auto bg-slate-50 p-1.5 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-right-4">
+                  <input
+                    type="date"
+                    value={customStart}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                    className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 w-full md:w-auto"
+                  />
+                  <span className="text-slate-400 font-bold">-</span>
+                  <input
+                    type="date"
+                    value={customEnd}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                    className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 w-full md:w-auto"
+                  />
+                </div>
+              )}
+            </div>
+
 
             {/* --- KPI Cards (Local Data) --- */}
             <div className="grid grid-cols-2 xl:grid-cols-6 gap-2 md:gap-4">
@@ -1002,16 +1107,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                     <TrendingUp size={18} className="text-blue-600 md:w-5 md:h-5" />
                     <span>Revenue Trends</span>
                   </h3>
-                  <select
-                    value={revenueRange}
-                    onChange={(e) => setRevenueRange(e.target.value as RevenueRange)}
-                    className="text-xs md:text-sm border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700"
-                  >
-                    <option value="10d">Last 10 days</option>
-                    <option value="month">This month</option>
-                    <option value="year">This year</option>
-                    <option value="till">Till date (all)</option>
-                  </select>
+
                 </div>
                 <div className="h-48 md:h-64 w-full">
                   <SimpleBarChart data={chartDataRevenue} />
@@ -1099,12 +1195,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {stats.topCustomers.map((customer, idx) => (
                       <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
-                          idx === 0 ? 'bg-yellow-100 text-yellow-700' :
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${idx === 0 ? 'bg-yellow-100 text-yellow-700' :
                           idx === 1 ? 'bg-slate-200 text-slate-700' :
-                          idx === 2 ? 'bg-orange-100 text-orange-700' :
-                          'bg-blue-50 text-blue-600'
-                        }`}>
+                            idx === 2 ? 'bg-orange-100 text-orange-700' :
+                              'bg-blue-50 text-blue-600'
+                          }`}>
                           {idx + 1}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1225,7 +1320,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                         color="from-blue-500 to-blue-600"
                       />
                     )}
-                    
+
                     {/* Growth Rate */}
                     {analysis.growth_percentage !== undefined && (
                       <MetricCard
@@ -1382,9 +1477,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                       </div>
                     ) : (
                       chat.map((m, idx) => (
-                        <div key={idx} className={`rounded-lg p-2 text-xs leading-relaxed ${
-                          m.role === 'user' ? 'bg-white/10 text-white' : 'bg-slate-950/40 text-slate-100'
-                        }`}>
+                        <div key={idx} className={`rounded-lg p-2 text-xs leading-relaxed ${m.role === 'user' ? 'bg-white/10 text-white' : 'bg-slate-950/40 text-slate-100'
+                          }`}>
                           <div className="text-[10px] uppercase tracking-wide text-slate-300 mb-1">
                             {m.role === 'user' ? 'ME' : 'AI'}
                           </div>
