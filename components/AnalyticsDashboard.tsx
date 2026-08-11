@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Invoice, Product, Customer } from '../types';
+import { CustomerSpendingModal } from './CustomerSpendingModal';
 import { GoogleGenAI, Type } from "@google/genai";
 import {
   BarChart3,
@@ -378,6 +379,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
   const [timeFilter, setTimeFilter] = useState<string>('month');
   const [customStart, setCustomStart] = useState<string>('');
   const [customEnd, setCustomEnd] = useState<string>('');
+  const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<Customer | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(null);
@@ -1202,17 +1204,32 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
                           }`}>
                           {idx + 1}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-slate-800 text-xs sm:text-sm truncate">{customer.name}</div>
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
+                          const found = customers.find(c => c.name.toLowerCase().trim() === customer.name.toLowerCase().trim());
+                          setSelectedCustomerForModal(found || { id: customer.name, name: customer.name, city: '' });
+                        }}>
+                          <div className="font-semibold text-slate-800 text-xs sm:text-sm truncate hover:text-blue-600 underline-offset-2 hover:underline">{customer.name}</div>
                           <div className="text-[11px] sm:text-xs text-slate-500">{customer.invoiceCount} invoices • {formatWeight(customer.totalWeightGrams)}</div>
                         </div>
-                        <div className="text-right">
-                          <div className="font-bold text-blue-600 text-xs sm:text-sm whitespace-nowrap">
-                            {formatINRFull(customer.totalSpent)}
+                        <div className="text-right flex items-center gap-2">
+                          <div>
+                            <div className="font-bold text-blue-600 text-xs sm:text-sm whitespace-nowrap">
+                              {formatINRFull(customer.totalSpent)}
+                            </div>
+                            <div className="text-[11px] sm:text-xs text-slate-500 whitespace-nowrap">
+                              {formatINRFull(Math.round(customer.totalSpent / customer.invoiceCount))}/avg
+                            </div>
                           </div>
-                          <div className="text-[11px] sm:text-xs text-slate-500 whitespace-nowrap">
-                            {formatINRFull(Math.round(customer.totalSpent / customer.invoiceCount))}/avg
-                          </div>
+                          <button
+                            onClick={() => {
+                              const found = customers.find(c => c.name.toLowerCase().trim() === customer.name.toLowerCase().trim());
+                              setSelectedCustomerForModal(found || { id: customer.name, name: customer.name, city: '' });
+                            }}
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded"
+                            title="View Spending & Purchase Chart"
+                          >
+                            <BarChart3 size={16} />
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1585,6 +1602,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
           </div>
         </div>
       </div>
+
+      {/* Customer Spending & Purchase Details Modal */}
+      {selectedCustomerForModal && (
+        <CustomerSpendingModal
+          customer={selectedCustomerForModal}
+          invoices={invoices}
+          onClose={() => setSelectedCustomerForModal(null)}
+        />
+      )}
     </div>
   );
 };

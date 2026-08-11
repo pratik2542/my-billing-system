@@ -19,6 +19,7 @@ import {
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { InvoiceHistory } from './components/InvoiceHistory';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { CustomerSpendingModal } from './components/CustomerSpendingModal';
 import {
   Product,
   Customer,
@@ -34,6 +35,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   addDoc,
   updateDoc,
@@ -43,6 +45,11 @@ import {
   orderBy
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut, User } from 'firebase/auth';
+
+const isMainAdminUser = (u: User | null) => {
+  if (!u || !u.email) return false;
+  return u.email.toLowerCase() === 'admin.sjbgu@google.com';
+};
 
 const App: React.FC = () => {
   // --- Auth State ---
@@ -100,6 +107,9 @@ const App: React.FC = () => {
   // --- Invoice Edit State ---
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
 
+  // --- Customer Spending Modal State ---
+  const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<Customer | null>(null);
+
   // --- Authentication Listener ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -109,43 +119,56 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // --- Firestore Listeners (Real-time Data) ---
+  // --- Firestore Listeners (Real-time Data per Account) ---
   useEffect(() => {
     if (!user) return;
 
     setDataLoading(true);
 
+    const isAdmin = isMainAdminUser(user);
+
+    const settingsRef = isAdmin
+      ? doc(db, 'settings', 'general')
+      : doc(db, 'users', user.uid, 'settings', 'general');
+
+    const productsQuery = isAdmin
+      ? query(collection(db, 'products'), orderBy('name'))
+      : query(collection(db, 'users', user.uid, 'products'), orderBy('name'));
+
+    const customersQuery = isAdmin
+      ? query(collection(db, 'customers'), orderBy('name'))
+      : query(collection(db, 'users', user.uid, 'customers'), orderBy('name'));
+
+    const invoicesQuery = isAdmin
+      ? query(collection(db, 'invoices'), orderBy('id', 'desc'))
+      : query(collection(db, 'users', user.uid, 'invoices'), orderBy('id', 'desc'));
+
     // 1. Settings Listener
-    const settingsRef = doc(db, 'settings', 'general'); // Single doc for business settings
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
         const loadedSettings = { ...DEFAULT_BUSINESS_SETTINGS, ...docSnap.data() } as BusinessSettings;
         setSettings(loadedSettings);
         setTempSettings(loadedSettings);
       } else {
-        // Initialize if doesn't exist
         setDoc(settingsRef, DEFAULT_BUSINESS_SETTINGS);
       }
     });
 
     // 2. Products Listener
-    const productsQuery = query(collection(db, 'products'), orderBy('name'));
     const unsubProducts = onSnapshot(productsQuery, (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
     });
 
     // 3. Customers Listener
-    const customersQuery = query(collection(db, 'customers'), orderBy('name'));
     const unsubCustomers = onSnapshot(customersQuery, (snapshot) => {
       const custs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
       setCustomers(custs);
     });
 
     // 4. Invoices Listener
-    const invoicesQuery = query(collection(db, 'invoices'), orderBy('id', 'desc')); // Assuming ID is roughly chronological or numeric
     const unsubInvoices = onSnapshot(invoicesQuery, (snapshot) => {
-      const invs = snapshot.docs.map(doc => ({ ...doc.data() } as Invoice)); // ID is part of data for Invoice
+      const invs = snapshot.docs.map(doc => ({ ...doc.data() } as Invoice));
       setInvoices(invs);
       setDataLoading(false);
     });
@@ -230,7 +253,7 @@ const App: React.FC = () => {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (error: any) {
       console.error(error);
-      setLoginError('Invalid credentials. Please try again.');
+      setLoginError('Invalid email or password. Please try again.');
     }
   };
 
@@ -238,25 +261,39 @@ const App: React.FC = () => {
     await signOut(auth);
     setEmail('');
     setPassword('');
+    setProducts([]);
+    setCustomers([]);
+    setInvoices([]);
+    setSettings(DEFAULT_BUSINESS_SETTINGS);
+    setTempSettings(DEFAULT_BUSINESS_SETTINGS);
+    setHasUnsavedChanges(false);
+    setHasUnsavedSettings(false);
+    setEditingInvoice(null);
   };
 
   // --- Data Operations (Firestore) ---
 
+  // Target Firestore Path Helpers
+  const getSettingsRef = () => isMainAdminUser(user) ? doc(db, 'settings', 'general') : doc(db, 'users', user!.uid, 'settings', 'general');
+  const getProductsCol = () => isMainAdminUser(user) ? collection(db, 'products') : collection(db, 'users', user!.uid, 'products');
+  const getCustomersCol = () => isMainAdminUser(user) ? collection(db, 'customers') : collection(db, 'users', user!.uid, 'customers');
+  const getInvoicesCol = () => isMainAdminUser(user) ? collection(db, 'invoices') : collection(db, 'users', user!.uid, 'invoices');
+
   const handleSaveInvoice = async (invoice: Invoice) => {
+    if (!user) return;
     try {
-      // Check if we're editing an existing invoice
       const isEditing = editingInvoice && editingInvoice.id === invoice.id;
+      const invCol = getInvoicesCol();
+      const settingsRef = getSettingsRef();
       
       if (isEditing) {
-        // Just update the invoice without incrementing the counter
-        await setDoc(doc(db, 'invoices', invoice.id), invoice);
+        await setDoc(doc(invCol, invoice.id), invoice);
       } else {
-        // Save new invoice and increment counter
         const nextNo = (settings.nextInvoiceNumber || 0) + 1;
         
         await Promise.all([
-          setDoc(doc(db, 'invoices', invoice.id), invoice),
-          updateDoc(doc(db, 'settings', 'general'), { nextInvoiceNumber: nextNo })
+          setDoc(doc(invCol, invoice.id), invoice),
+          updateDoc(settingsRef, { nextInvoiceNumber: nextNo })
         ]);
 
         // Update local state optimistically
@@ -265,15 +302,15 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Error saving invoice: ", e);
       alert("Failed to save invoice to database.");
-      throw e; // rethrow so callers know it failed
+      throw e;
     }
   };
 
   const handleUpdateSettings = async (newSettings: BusinessSettings) => {
-    // Optimistic update for UI
+    if (!user) return;
     setSettings(newSettings);
     try {
-      await setDoc(doc(db, 'settings', 'general'), newSettings);
+      await setDoc(getSettingsRef(), newSettings);
     } catch (e) {
       console.error("Error saving settings: ", e);
     }
@@ -287,9 +324,10 @@ const App: React.FC = () => {
 
   // Save settings with confirmation
   const handleSaveSettings = async () => {
+    if (!user) return;
     setIsSavingSettings(true);
     try {
-      await setDoc(doc(db, 'settings', 'general'), tempSettings);
+      await setDoc(getSettingsRef(), tempSettings);
       setSettings(tempSettings);
       setHasUnsavedSettings(false);
       alert('Settings saved successfully!');
@@ -304,11 +342,12 @@ const App: React.FC = () => {
   // --- Product Handlers ---
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
 
     try {
+      const prodCol = getProductsCol();
       if (editingProductId) {
-        // Update
-        const productRef = doc(db, 'products', editingProductId);
+        const productRef = doc(prodCol, editingProductId);
         await updateDoc(productRef, {
           name: prodForm.name,
           rate: Number(prodForm.rate),
@@ -317,15 +356,13 @@ const App: React.FC = () => {
         });
         setEditingProductId(null);
       } else {
-        // Add
-        await addDoc(collection(db, 'products'), {
+        await addDoc(prodCol, {
           name: prodForm.name,
           rate: Number(prodForm.rate),
           unit: prodForm.unit,
           packing: prodForm.packing,
         });
       }
-      // Reset Form
       setProdForm({ name: '', packing: '', rate: '', unit: 'Kg' });
     } catch (e) {
       console.error("Error saving product: ", e);
@@ -352,9 +389,10 @@ const App: React.FC = () => {
   };
 
   const deleteProduct = async (id: string) => {
+    if (!user) return;
     if (!window.confirm("Are you sure you want to delete this product?")) return;
     try {
-      await deleteDoc(doc(db, 'products', id));
+      await deleteDoc(doc(getProductsCol(), id));
       if (editingProductId === id) cancelEditProduct();
     } catch (e) {
       console.error("Error deleting product:", e);
@@ -364,12 +402,12 @@ const App: React.FC = () => {
   // --- Customer Handlers ---
   const handleCustomerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!custForm.name.trim()) return;
+    if (!user || !custForm.name.trim()) return;
 
     try {
+      const custCol = getCustomersCol();
       if (editingCustomerId) {
-        // Update
-        const custRef = doc(db, 'customers', editingCustomerId);
+        const custRef = doc(custCol, editingCustomerId);
         await updateDoc(custRef, {
           name: custForm.name,
           city: custForm.city,
@@ -377,8 +415,7 @@ const App: React.FC = () => {
         });
         setEditingCustomerId(null);
       } else {
-        // Add
-        await addDoc(collection(db, 'customers'), {
+        await addDoc(custCol, {
           name: custForm.name,
           city: custForm.city,
           phone: custForm.phone,
@@ -408,9 +445,10 @@ const App: React.FC = () => {
   };
 
   const deleteCustomer = async (id: string) => {
+    if (!user) return;
     if (!window.confirm("Are you sure you want to delete this customer?")) return;
     try {
-      await deleteDoc(doc(db, 'customers', id));
+      await deleteDoc(doc(getCustomersCol(), id));
       if (editingCustomerId === id) cancelEditCustomer();
     } catch (e) {
       console.error("Error deleting customer:", e);
@@ -419,9 +457,10 @@ const App: React.FC = () => {
 
   // --- Invoice Handlers ---
   const handleDeleteInvoice = async (invoiceId: string) => {
+    if (!user) return;
     if (!window.confirm("Are you sure you want to delete this invoice? This action cannot be undone.")) return;
     try {
-      await deleteDoc(doc(db, 'invoices', invoiceId));
+      await deleteDoc(doc(getInvoicesCol(), invoiceId));
       alert('Invoice deleted successfully!');
     } catch (e) {
       console.error("Error deleting invoice:", e);
@@ -648,8 +687,9 @@ const App: React.FC = () => {
             <button type="submit" className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded transition shadow-md">
               Access System
             </button>
-            <div className="bg-slate-50 p-3 rounded text-xs text-slate-500 text-center">
-              <p>Note: Ensure your Firebase config is set up in firebase.ts</p>
+
+            <div className="bg-slate-50 p-3 rounded text-xs text-slate-500 text-center mt-2">
+              <p>Each user account has its own isolated environment for business settings, products, and invoices.</p>
             </div>
           </form>
         </div>
@@ -1074,11 +1114,14 @@ const App: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex gap-2 pt-3 border-t border-slate-100">
-                        <button onClick={() => startEditCustomer(c)} className="flex-1 bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-2 font-medium text-sm transition-colors">
-                          <Edit size={16} /> Edit
+                        <button onClick={() => setSelectedCustomerForModal(c)} className="flex-1 bg-indigo-50 text-indigo-700 py-2 px-3 rounded-lg hover:bg-indigo-100 flex items-center justify-center gap-1.5 font-medium text-xs transition-colors">
+                          <BarChart3 size={15} /> Spending & Purchases
                         </button>
-                        <button onClick={() => deleteCustomer(c.id)} className="flex-1 bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-2 font-medium text-sm transition-colors">
-                          <Trash size={16} /> Delete
+                        <button onClick={() => startEditCustomer(c)} className="bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
+                          <Edit size={15} /> Edit
+                        </button>
+                        <button onClick={() => deleteCustomer(c.id)} className="bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
+                          <Trash size={15} /> Delete
                         </button>
                       </div>
                     </div>
@@ -1111,6 +1154,9 @@ const App: React.FC = () => {
                           <td className="p-4 text-slate-500">{c.phone || '-'}</td>
                           <td className="p-4 text-right">
                             <div className="flex justify-end gap-2">
+                              <button onClick={() => setSelectedCustomerForModal(c)} className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-2.5 py-1.5 rounded transition-colors flex items-center gap-1.5 text-xs font-bold border border-indigo-200 shadow-sm" title="View Customer Spending & Purchase Chart">
+                                <BarChart3 size={16} /> Spending & Purchases
+                              </button>
                               <button onClick={() => startEditCustomer(c)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded transition-colors" title="Edit">
                                 <Edit size={18} />
                               </button>
@@ -1557,6 +1603,15 @@ const App: React.FC = () => {
         )}
 
       </main>
+
+      {/* Customer Spending & Purchase Details Modal */}
+      {selectedCustomerForModal && (
+        <CustomerSpendingModal
+          customer={selectedCustomerForModal}
+          invoices={invoices}
+          onClose={() => setSelectedCustomerForModal(null)}
+        />
+      )}
     </div>
   );
 };
