@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Package,
+  PackagePlus,
   Users,
+  UserPlus,
   Settings,
   LogOut,
   Menu,
@@ -14,20 +16,29 @@ import {
   Save,
   History,
   BarChart3,
-  Loader2
+  Loader2,
+  ShieldCheck,
+  AlertTriangle,
+  Table
 } from 'lucide-react';
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { InvoiceHistory } from './components/InvoiceHistory';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { CustomerSpendingModal } from './components/CustomerSpendingModal';
+import { ProductAnalysisModal } from './components/ProductAnalysisModal';
+import { PaymentTrackerModal } from './components/PaymentTrackerModal';
+import { AdminPortal, parseDeviceInfo } from './components/AdminPortal';
 import {
   Product,
   Customer,
   BusinessSettings,
   AppTab,
-  Invoice
+  Invoice,
+  PaymentEntry,
+  UserProfile,
+  ActivityCategory
 } from './types';
-import { DEFAULT_BUSINESS_SETTINGS } from './constants';
+import { DEFAULT_BUSINESS_SETTINGS, DEFAULT_PRODUCT_UNITS, DEFAULT_COLUMN_HEADERS } from './constants';
 
 // Firebase Imports
 import { db, auth } from './firebase';
@@ -42,11 +53,18 @@ import {
   deleteDoc,
   onSnapshot,
   query,
-  orderBy
+  orderBy,
+  limit,
+  increment
 } from 'firebase/firestore';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut, User } from 'firebase/auth';
 
 const isMainAdminUser = (u: User | null) => {
+  if (!u || !u.email) return false;
+  return u.email.toLowerCase() === 'admin_billing@pratik.ca';
+};
+
+const isLegacyGlobalAccount = (u: User | null) => {
   if (!u || !u.email) return false;
   return u.email.toLowerCase() === 'admin.sjbgu@google.com';
 };
@@ -63,12 +81,42 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.CREATE_BILL);
   const [dataLoading, setDataLoading] = useState(false);
 
-  // Real-time Data from Firestore
-  const [products, setProducts] = useState<Product[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [settings, setSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
+  // Real-time Data from Firestore with Local Cache Fallback
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_products');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
+
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_customers');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
+
+  const [invoices, setInvoices] = useState<Invoice[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_invoices');
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
+
+  const [settings, setSettings] = useState<BusinessSettings>(() => {
+    try {
+      const cached = localStorage.getItem('cached_settings');
+      return cached ? { ...DEFAULT_BUSINESS_SETTINGS, ...JSON.parse(cached) } : DEFAULT_BUSINESS_SETTINGS;
+    } catch { return DEFAULT_BUSINESS_SETTINGS; }
+  });
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  const getDefaultUnit = (s: BusinessSettings) => {
+    if (s.customUnits && s.customUnits.length > 0) {
+      return s.customUnits[0];
+    }
+    return DEFAULT_PRODUCT_UNITS[0] || 'Qty';
+  };
 
   // --- Product Edit State ---
   const [prodForm, setProdForm] = useState({
@@ -79,6 +127,15 @@ const App: React.FC = () => {
   });
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const productFormRef = useRef<HTMLDivElement>(null);
+
+  // Sync prodForm unit with configured customUnits when settings change
+  useEffect(() => {
+    if (!editingProductId && settings.customUnits && settings.customUnits.length > 0) {
+      if (!settings.customUnits.includes(prodForm.unit)) {
+        setProdForm(prev => ({ ...prev, unit: settings.customUnits![0] }));
+      }
+    }
+  }, [settings.customUnits, editingProductId]);
 
   // --- Customer Edit State ---
   const [custForm, setCustForm] = useState({
@@ -103,6 +160,21 @@ const App: React.FC = () => {
   const [tempSettings, setTempSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
   const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [newUnitInput, setNewUnitInput] = useState('');
+  const [settingsSubTab, setSettingsSubTab] = useState<'branding' | 'units' | 'billing' | 'tax_bank'>('branding');
+
+  const handleAddCustomUnit = () => {
+    const trimmed = newUnitInput.trim();
+    if (!trimmed) return;
+    const current = tempSettings.customUnits || DEFAULT_PRODUCT_UNITS.slice(0, 10);
+    if (current.some(u => u.toLowerCase() === trimmed.toLowerCase())) {
+      alert(`Unit "${trimmed}" is already in your unit list.`);
+      return;
+    }
+    const updated = [...current, trimmed];
+    handleTempSettingsChange({ ...tempSettings, customUnits: updated });
+    setNewUnitInput('');
+  };
 
   // --- Invoice Edit State ---
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
@@ -110,38 +182,202 @@ const App: React.FC = () => {
   // --- Customer Spending Modal State ---
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<Customer | null>(null);
 
-  // --- Authentication Listener ---
+  // --- Product Analysis Modal State ---
+  const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
+
+  // --- Payment Tracker State ---
+  const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
+
+  // --- User Profile State & Concurrent Session Control ---
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [hasConcurrentSession, setHasConcurrentSession] = useState(false);
+  const [otherSessionInfo, setOtherSessionInfo] = useState<{ device?: string; time?: number }>({});
+  const [isClaimingSession, setIsClaimingSession] = useState(false);
+
+  const getOrInitSessionId = (): string => {
+    let sid = sessionStorage.getItem('my_billing_session_id');
+    if (!sid) {
+      sid = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+      sessionStorage.setItem('my_billing_session_id', sid);
+    }
+    return sid;
+  };
+
+  // --- Authentication Listener (Non-blocking Fast Startup) ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setIsAuthLoading(false);
+
+      if (currentUser) {
+        // Non-blocking profile tracking & block status check
+        (async () => {
+          try {
+            const profileRef = doc(db, 'userProfiles', currentUser.uid);
+            const profileSnap = await getDoc(profileRef);
+
+            if (profileSnap.exists() && profileSnap.data().status === 'blocked') {
+              await signOut(auth);
+              setLoginError('Your account has been blocked. Please contact admin.');
+              return;
+            }
+
+            const { device, browser } = parseDeviceInfo(navigator.userAgent);
+            const deviceStr = `${device} (${browser})`;
+            const now = Date.now();
+            const sessionId = `${currentUser.uid}-${now}`;
+            const currentSid = getOrInitSessionId();
+
+            const isLegacy = isLegacyGlobalAccount(currentUser);
+            const defaultBizId = isLegacy ? 'global' : currentUser.uid;
+
+            if (!profileSnap.exists()) {
+              await setDoc(profileRef, {
+                uid: currentUser.uid,
+                email: currentUser.email,
+                displayName: currentUser.email?.split('@')[0] || '',
+                status: 'active',
+                businessId: defaultBizId,
+                businessName: isLegacy ? 'SJBGU Store' : (currentUser.email?.split('@')[0] || ''),
+                role: 'owner',
+                maxAllowedSessions: 1,
+                activeSessions: [{ id: currentSid, device: deviceStr, lastActive: now }],
+                activeSessionId: currentSid,
+                activeSessionDevice: deviceStr,
+                createdAt: now,
+                lastLogin: now,
+                lastSeen: now,
+                aiRequestCount: 0,
+                errorCount: 0,
+                invoiceCount: 0,
+              });
+            } else {
+              const data = profileSnap.data() as UserProfile;
+              const maxAllowed = data.maxAllowedSessions || 1;
+              const currentActive = (data.activeSessions || []).filter(s => (now - s.lastActive) < 24 * 3600 * 1000);
+              
+              const exists = currentActive.some(s => s.id === currentSid);
+              let updatedActive = [...currentActive];
+              if (exists) {
+                updatedActive = updatedActive.map(s => s.id === currentSid ? { ...s, lastActive: now, device: deviceStr } : s);
+              } else if (updatedActive.length < maxAllowed) {
+                updatedActive.push({ id: currentSid, device: deviceStr, lastActive: now });
+              }
+
+              const updates: any = {
+                lastLogin: now,
+                lastSeen: now,
+                activeSessions: updatedActive,
+                activeSessionId: currentSid,
+                activeSessionDevice: deviceStr
+              };
+              if (isLegacy && (!data.businessId || data.businessId !== 'global')) {
+                updates.businessId = 'global';
+              }
+              await updateDoc(profileRef, updates);
+            }
+
+            setDoc(doc(db, 'userProfiles', currentUser.uid, 'sessions', sessionId), {
+              device, browser, loginAt: now, lastActive: now,
+            }).catch(() => {});
+          } catch (e) {
+            console.warn('Background profile setup warning:', e);
+          }
+        })();
+      }
     });
     return () => unsubscribe();
   }, []);
 
-  // --- Firestore Listeners (Real-time Data per Account) ---
+  const wasRegisteredRef = useRef(false);
+
+  // --- User Profile & Real-Time Concurrent Session Listener ---
+  useEffect(() => {
+    if (!user) {
+      setUserProfile(null);
+      setHasConcurrentSession(false);
+      wasRegisteredRef.current = false;
+      return;
+    }
+    const unsubProfile = onSnapshot(doc(db, 'userProfiles', user.uid), async (docSnap) => {
+      if (docSnap.exists()) {
+        const profileData = docSnap.data() as UserProfile;
+        setUserProfile(profileData);
+
+        const currentSid = getOrInitSessionId();
+        const maxAllowed = profileData.maxAllowedSessions || 1;
+        const activeList = profileData.activeSessions || [];
+
+        // Check if current tab's session token is registered in activeSessions list
+        const isSessionRegistered = activeList.some(s => s.id === currentSid);
+        
+        if (isSessionRegistered) {
+          wasRegisteredRef.current = true;
+          setHasConcurrentSession(false);
+        } else {
+          // If this session was previously registered and active, but was evicted/removed:
+          if (wasRegisteredRef.current) {
+            wasRegisteredRef.current = false;
+            setHasConcurrentSession(false);
+            try {
+              await signOut(auth);
+            } catch { /* ignore */ }
+            setUser(null);
+            setUserProfile(null);
+            setLoginError('You were logged out because your account logged in on another device.');
+            return;
+          }
+
+          // New un-registered session attempt exceeding limit
+          if (activeList.length >= maxAllowed) {
+            setHasConcurrentSession(true);
+            setOtherSessionInfo({
+              device: activeList[0]?.device || profileData.activeSessionDevice || 'Another device/browser',
+              time: activeList[0]?.lastActive || profileData.lastLogin
+            });
+          } else {
+            // Automatically register current session if below max allowed limit
+            const { device, browser } = parseDeviceInfo(navigator.userAgent);
+            const deviceStr = `${device} (${browser})`;
+            const now = Date.now();
+            const updatedList = [...activeList, { id: currentSid, device: deviceStr, lastActive: now }];
+            updateDoc(doc(db, 'userProfiles', user.uid), { activeSessions: updatedList }).catch(() => {});
+            wasRegisteredRef.current = true;
+            setHasConcurrentSession(false);
+          }
+        }
+      }
+    }, (err) => {
+      console.warn('UserProfile snapshot listener error:', err.message);
+    });
+    return () => unsubProfile();
+  }, [user]);
+
+  // --- Firestore Data Listeners (Fast Single-Pass Fetching) ---
   useEffect(() => {
     if (!user) return;
 
     setDataLoading(true);
 
-    const isAdmin = isMainAdminUser(user);
+    const isLegacy = isLegacyGlobalAccount(user);
+    const isGlobalPath = isLegacy || userProfile?.businessId === 'global';
+    const workspaceId = userProfile?.businessId || user.uid;
 
-    const settingsRef = isAdmin
+    const settingsRef = isGlobalPath
       ? doc(db, 'settings', 'general')
-      : doc(db, 'users', user.uid, 'settings', 'general');
+      : doc(db, 'users', workspaceId, 'settings', 'general');
 
-    const productsQuery = isAdmin
-      ? query(collection(db, 'products'), orderBy('name'))
-      : query(collection(db, 'users', user.uid, 'products'), orderBy('name'));
+    const productsQuery = isGlobalPath
+      ? query(collection(db, 'products'))
+      : query(collection(db, 'users', workspaceId, 'products'));
 
-    const customersQuery = isAdmin
-      ? query(collection(db, 'customers'), orderBy('name'))
-      : query(collection(db, 'users', user.uid, 'customers'), orderBy('name'));
+    const customersQuery = isGlobalPath
+      ? query(collection(db, 'customers'))
+      : query(collection(db, 'users', workspaceId, 'customers'));
 
-    const invoicesQuery = isAdmin
-      ? query(collection(db, 'invoices'), orderBy('id', 'desc'))
-      : query(collection(db, 'users', user.uid, 'invoices'), orderBy('id', 'desc'));
+    const invoicesQuery = isGlobalPath
+      ? query(collection(db, 'invoices'), limit(1000))
+      : query(collection(db, 'users', workspaceId, 'invoices'), limit(1000));
 
     // 1. Settings Listener
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
@@ -149,27 +385,40 @@ const App: React.FC = () => {
         const loadedSettings = { ...DEFAULT_BUSINESS_SETTINGS, ...docSnap.data() } as BusinessSettings;
         setSettings(loadedSettings);
         setTempSettings(loadedSettings);
+        try { localStorage.setItem('cached_settings', JSON.stringify(loadedSettings)); } catch {}
       } else {
-        setDoc(settingsRef, DEFAULT_BUSINESS_SETTINGS);
+        setDoc(settingsRef, DEFAULT_BUSINESS_SETTINGS).catch(err => console.warn('Settings setDoc warning:', err));
       }
+    }, (err) => {
+      console.warn('Settings snapshot listener error:', err.message);
     });
 
     // 2. Products Listener
     const unsubProducts = onSnapshot(productsQuery, (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
+      try { localStorage.setItem('cached_products', JSON.stringify(prods)); } catch {}
+    }, (err) => {
+      console.warn('Products snapshot listener error:', err.message);
     });
 
     // 3. Customers Listener
     const unsubCustomers = onSnapshot(customersQuery, (snapshot) => {
       const custs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
       setCustomers(custs);
+      try { localStorage.setItem('cached_customers', JSON.stringify(custs)); } catch {}
+    }, (err) => {
+      console.warn('Customers snapshot listener error:', err.message);
     });
 
     // 4. Invoices Listener
     const unsubInvoices = onSnapshot(invoicesQuery, (snapshot) => {
       const invs = snapshot.docs.map(doc => ({ ...doc.data() } as Invoice));
       setInvoices(invs);
+      setDataLoading(false);
+      try { localStorage.setItem('cached_invoices', JSON.stringify(invs)); } catch {}
+    }, (err) => {
+      console.warn('Invoices snapshot listener error:', err.message);
       setDataLoading(false);
     });
 
@@ -179,7 +428,36 @@ const App: React.FC = () => {
       unsubCustomers();
       unsubInvoices();
     };
-  }, [user]);
+  }, [user, userProfile?.businessId]);
+
+  const handleClaimSession = async () => {
+    if (!user) return;
+    setIsClaimingSession(true);
+    try {
+      const currentSid = getOrInitSessionId();
+      const { device, browser } = parseDeviceInfo(navigator.userAgent);
+      const deviceStr = `${device} (${browser})`;
+      const now = Date.now();
+
+      // Revoke all other active sessions and set only this current session
+      await updateDoc(doc(db, 'userProfiles', user.uid), {
+        activeSessions: [{ id: currentSid, device: deviceStr, lastActive: now }],
+        activeSessionId: currentSid,
+        activeSessionDevice: deviceStr,
+        lastLogin: now,
+        lastSeen: now
+      });
+      setHasConcurrentSession(false);
+    } catch (e) {
+      console.error('Failed to claim session:', e);
+    } finally {
+      setIsClaimingSession(false);
+    }
+  };
+
+  // --- Payment Tracking Feature Flag ---
+  const isPaymentTrackingAllowed = !userProfile?.paymentTrackingBlocked;
+  const isPaymentTrackingActive = isPaymentTrackingAllowed && (settings.enablePaymentTracking !== false);
 
   // --- Update Document Title and Favicon ---
   useEffect(() => {
@@ -241,10 +519,52 @@ const App: React.FC = () => {
       setHasUnsavedChanges(false);
       setEditingInvoice(null); // Clear editing state when navigating away
     }
+
+    if (activeTab === AppTab.SETTINGS && hasUnsavedSettings && tab !== AppTab.SETTINGS) {
+      if (!window.confirm("You have unsaved changes in Settings. Are you sure you want to leave? Your changes will be discarded.")) {
+        return;
+      }
+      setTempSettings(settings);
+      setHasUnsavedSettings(false);
+    }
     setActiveTab(tab);
   };
 
   // --- Handlers ---
+
+  // --- Error Logger (writes errors to Firestore) ---
+  const logAppError = async (message: string, route: string, stack?: string) => {
+    if (!user) return;
+    try {
+      const errRef = doc(collection(db, 'userProfiles', user.uid, 'errorLogs'));
+      await setDoc(errRef, { message, route, stack: stack || '', timestamp: Date.now() });
+      await updateDoc(doc(db, 'userProfiles', user.uid), { errorCount: increment(1) });
+    } catch { /* non-fatal */ }
+  };
+
+  // --- Activity Logger (writes activity logs to Firestore) ---
+  const logUserActivity = async (category: ActivityCategory, action: string, details?: string) => {
+    if (!user) return;
+    try {
+      const actRef = doc(collection(db, 'userProfiles', user.uid, 'activityLogs'));
+      await setDoc(actRef, {
+        id: actRef.id,
+        category,
+        action,
+        details: details || '',
+        timestamp: Date.now()
+      });
+    } catch { /* non-fatal */ }
+  };
+
+  // --- AI Usage Tracker ---
+  const handleAiRequest = async () => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'userProfiles', user.uid), { aiRequestCount: increment(1) });
+      logUserActivity('ai', 'AI Request', 'Used AI smart assistant');
+    } catch { /* non-fatal */ }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -273,11 +593,24 @@ const App: React.FC = () => {
 
   // --- Data Operations (Firestore) ---
 
-  // Target Firestore Path Helpers
-  const getSettingsRef = () => isMainAdminUser(user) ? doc(db, 'settings', 'general') : doc(db, 'users', user!.uid, 'settings', 'general');
-  const getProductsCol = () => isMainAdminUser(user) ? collection(db, 'products') : collection(db, 'users', user!.uid, 'products');
-  const getCustomersCol = () => isMainAdminUser(user) ? collection(db, 'customers') : collection(db, 'users', user!.uid, 'customers');
-  const getInvoicesCol = () => isMainAdminUser(user) ? collection(db, 'invoices') : collection(db, 'users', user!.uid, 'invoices');
+  // Target Firestore Path Helpers (Supports Shared Business Workspaces & Legacy Root Data)
+  const getWorkspaceId = () => (userProfile?.businessId || user?.uid || '');
+  const isUseGlobal = () => isLegacyGlobalAccount(user) || (userProfile?.businessId === 'global');
+
+  const getSettingsRef = () => isUseGlobal() ? doc(db, 'settings', 'general') : doc(db, 'users', getWorkspaceId(), 'settings', 'general');
+  const getProductsCol = () => isUseGlobal() ? collection(db, 'products') : collection(db, 'users', getWorkspaceId(), 'products');
+  const getCustomersCol = () => isUseGlobal() ? collection(db, 'customers') : collection(db, 'users', getWorkspaceId(), 'customers');
+  const getInvoicesCol = () => isUseGlobal() ? collection(db, 'invoices') : collection(db, 'users', getWorkspaceId(), 'invoices');
+
+  const handleImportInvoices = async (importedInvoices: Invoice[]) => {
+    if (!user) return;
+    const invCol = getInvoicesCol();
+    for (const inv of importedInvoices) {
+      await setDoc(doc(invCol, inv.id), inv);
+    }
+    updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(importedInvoices.length) }).catch(() => {});
+    logUserActivity('invoice', 'Import Invoices', `Imported ${importedInvoices.length} invoices`);
+  };
 
   const handleSaveInvoice = async (invoice: Invoice) => {
     if (!user) return;
@@ -288,6 +621,7 @@ const App: React.FC = () => {
       
       if (isEditing) {
         await setDoc(doc(invCol, invoice.id), invoice);
+        logUserActivity('invoice', 'Edit Invoice', `Updated Bill #${invoice.id} (₹${invoice.total})`);
       } else {
         const nextNo = (settings.nextInvoiceNumber || 0) + 1;
         
@@ -295,6 +629,9 @@ const App: React.FC = () => {
           setDoc(doc(invCol, invoice.id), invoice),
           updateDoc(settingsRef, { nextInvoiceNumber: nextNo })
         ]);
+
+        updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(1) }).catch(() => {});
+        logUserActivity('invoice', 'Create Invoice', `Generated Bill #${invoice.id} (₹${invoice.total}) for ${invoice.customerName}`);
 
         // Update local state optimistically
         setSettings(prev => ({ ...prev, nextInvoiceNumber: nextNo }));
@@ -309,26 +646,90 @@ const App: React.FC = () => {
   const handleUpdateSettings = async (newSettings: BusinessSettings) => {
     if (!user) return;
     setSettings(newSettings);
+    setTempSettings(newSettings);
     try {
       await setDoc(getSettingsRef(), newSettings);
+      logUserActivity('settings', 'Update Settings', 'Updated business profile and configuration');
     } catch (e) {
       console.error("Error saving settings: ", e);
     }
   };
 
-  // Handle temporary settings changes (for Save button feature)
-  const handleTempSettingsChange = (newSettings: BusinessSettings) => {
-    setTempSettings(newSettings);
-    setHasUnsavedSettings(true);
+// Helper to compress base64 image data URLs for Firestore document size optimization
+const compressImageToMaxDataUrl = (
+  dataUrl: string,
+  maxWidth = 800,
+  maxHeight = 400,
+  quality = 0.8
+): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!dataUrl) return resolve('');
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width);
+        width = maxWidth;
+      }
+      if (height > maxHeight) {
+        width = Math.round((width * maxHeight) / height);
+        height = maxHeight;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(dataUrl);
+
+      ctx.drawImage(img, 0, 0, width, height);
+
+      try {
+        let compressed = canvas.toDataURL('image/webp', quality);
+        if (!compressed.startsWith('data:image/webp')) {
+          compressed = canvas.toDataURL('image/png');
+        }
+        resolve(compressed);
+      } catch (e) {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+};
+
+  const areSettingsEqual = (a: BusinessSettings, b: BusinessSettings) => {
+    return JSON.stringify(a) === JSON.stringify(b);
   };
 
-  // Save settings with confirmation
+  // Handle temporary settings changes (Smart comparison against saved settings)
+  const handleTempSettingsChange = (newSettings: BusinessSettings) => {
+    setTempSettings(newSettings);
+    setHasUnsavedSettings(!areSettingsEqual(newSettings, settings));
+  };
+
+  // Save settings with confirmation and automatic image compression
   const handleSaveSettings = async () => {
     if (!user) return;
     setIsSavingSettings(true);
     try {
-      await setDoc(getSettingsRef(), tempSettings);
-      setSettings(tempSettings);
+      let settingsToSave = { ...tempSettings };
+
+      // Compress logo & signature to ensure total document size is well under 1MB Firestore limit
+      if (settingsToSave.logoUrl && settingsToSave.logoUrl.length > 100000) {
+        settingsToSave.logoUrl = await compressImageToMaxDataUrl(settingsToSave.logoUrl, 800, 400, 0.8);
+      }
+      if (settingsToSave.signatureUrl && settingsToSave.signatureUrl.length > 100000) {
+        settingsToSave.signatureUrl = await compressImageToMaxDataUrl(settingsToSave.signatureUrl, 600, 300, 0.8);
+      }
+
+      await setDoc(getSettingsRef(), settingsToSave);
+      setSettings(settingsToSave);
+      setTempSettings(settingsToSave);
       setHasUnsavedSettings(false);
       alert('Settings saved successfully!');
     } catch (e) {
@@ -363,7 +764,7 @@ const App: React.FC = () => {
           packing: prodForm.packing,
         });
       }
-      setProdForm({ name: '', packing: '', rate: '', unit: 'Kg' });
+      setProdForm({ name: '', packing: '', rate: '', unit: getDefaultUnit(settings) });
     } catch (e) {
       console.error("Error saving product: ", e);
       alert("Failed to save product.");
@@ -384,7 +785,7 @@ const App: React.FC = () => {
   };
 
   const cancelEditProduct = () => {
-    setProdForm({ name: '', packing: '', rate: '', unit: 'Kg' });
+    setProdForm({ name: '', packing: '', rate: '', unit: getDefaultUnit(settings) });
     setEditingProductId(null);
   };
 
@@ -398,6 +799,69 @@ const App: React.FC = () => {
       console.error("Error deleting product:", e);
     }
   };
+
+  // Quick Save Product from Past Invoice data
+  const handleQuickSaveProduct = async (name: string, rate: number, unit: string, packing: string = '') => {
+    if (!user || !name.trim()) return;
+    try {
+      const prodCol = getProductsCol();
+      await addDoc(prodCol, {
+        name: name.trim(),
+        rate: Number(rate) || 0,
+        unit: unit || getDefaultUnit(settings),
+        packing: packing ? packing.trim() : ''
+      });
+      alert(`Product "${name.trim()}" saved to your product catalog!`);
+    } catch (e) {
+      console.error("Error quick-saving product:", e);
+      alert(`Failed to save product "${name}". Please try again.`);
+    }
+  };
+
+  // Unique products from past invoices that are not yet saved in the Products database
+  const unsavedInvoiceProducts = React.useMemo(() => {
+    const savedNames = new Set(products.map(p => p.name.trim().toLowerCase()));
+    const map = new Map<string, { name: string; rate: number; unit: string; packing: string; count: number; totalQty: number; totalRevenue: number }>();
+
+    invoices.forEach(inv => {
+      if (inv.items && Array.isArray(inv.items)) {
+        inv.items.forEach(item => {
+          if (item.name && item.name.trim()) {
+            const normName = item.name.trim().toLowerCase();
+            if (!savedNames.has(normName)) {
+              const existing = map.get(normName);
+              const qty = item.quantity || 0;
+              const amt = item.amount ?? ((item.rate || 0) * qty);
+              const rate = item.rate || 0;
+              const unit = item.unit || getDefaultUnit(settings);
+              const packing = item.packing || '';
+
+              if (existing) {
+                existing.count += 1;
+                existing.totalQty += qty;
+                existing.totalRevenue += amt;
+                if (!existing.rate && rate) existing.rate = rate;
+                if (!existing.unit && unit) existing.unit = unit;
+                if (!existing.packing && packing) existing.packing = packing;
+              } else {
+                map.set(normName, {
+                  name: item.name.trim(),
+                  rate: rate,
+                  unit: unit,
+                  packing: packing,
+                  count: 1,
+                  totalQty: qty,
+                  totalRevenue: amt
+                });
+              }
+            }
+          }
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+  }, [products, invoices, settings]);
 
   // --- Customer Handlers ---
   const handleCustomerSubmit = async (e: React.FormEvent) => {
@@ -426,6 +890,53 @@ const App: React.FC = () => {
       console.error("Error saving customer:", e);
     }
   };
+
+  // Quick Save Customer from Past Invoice data
+  const handleQuickSaveCustomer = async (name: string, city: string = '') => {
+    if (!user || !name.trim()) return;
+    try {
+      const custCol = getCustomersCol();
+      await addDoc(custCol, {
+        name: name.trim(),
+        city: city.trim(),
+        phone: ''
+      });
+      alert(`Customer "${name.trim()}" saved to your customer directory!`);
+    } catch (e) {
+      console.error("Error quick-saving customer:", e);
+      alert(`Failed to save customer "${name}". Please try again.`);
+    }
+  };
+
+  // Unique customers from past invoices that are not yet saved in the Customers database
+  const unsavedInvoiceCustomers = React.useMemo(() => {
+    const savedNames = new Set(customers.map(c => c.name.trim().toLowerCase()));
+    const map = new Map<string, { name: string; city: string; count: number; totalSpent: number }>();
+
+    invoices.forEach(inv => {
+      if (inv.customerName && inv.customerName.trim()) {
+        const normName = inv.customerName.trim().toLowerCase();
+        if (!savedNames.has(normName)) {
+          const existing = map.get(normName);
+          const amount = inv.total ?? (inv as any).totalAmount ?? 0;
+          if (existing) {
+            existing.count += 1;
+            existing.totalSpent += amount;
+            if (!existing.city && inv.customerCity) existing.city = inv.customerCity;
+          } else {
+            map.set(normName, {
+              name: inv.customerName.trim(),
+              city: inv.customerCity || '',
+              count: 1,
+              totalSpent: amount
+            });
+          }
+        }
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.totalSpent - a.totalSpent);
+  }, [customers, invoices]);
 
   const startEditCustomer = (customer: Customer) => {
     setCustForm({
@@ -461,6 +972,8 @@ const App: React.FC = () => {
     if (!window.confirm("Are you sure you want to delete this invoice? This action cannot be undone.")) return;
     try {
       await deleteDoc(doc(getInvoicesCol(), invoiceId));
+      updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(-1) }).catch(() => {});
+      logUserActivity('invoice', 'Delete Invoice', `Deleted Bill #${invoiceId}`);
       alert('Invoice deleted successfully!');
     } catch (e) {
       console.error("Error deleting invoice:", e);
@@ -474,59 +987,54 @@ const App: React.FC = () => {
     setActiveTab(AppTab.CREATE_BILL);
   };
 
+  // --- Payment Handlers ---
+  const handleManagePayments = (invoice: Invoice) => {
+    setPaymentInvoice(invoice);
+  };
+
+  const handleAddPayment = async (invoiceId: string, payment: PaymentEntry) => {
+    if (!user) return;
+    const invCol = getInvoicesCol();
+    const invRef = doc(invCol, invoiceId);
+    // Get current invoice payments
+    const invSnap = await getDoc(invRef);
+    if (!invSnap.exists()) throw new Error('Invoice not found');
+    const current = invSnap.data() as Invoice;
+    const updatedPayments = [...(current.payments || []), payment];
+    await updateDoc(invRef, { payments: updatedPayments });
+    logUserActivity('payment', 'Record Payment', `Recorded ₹${payment.amount} (${payment.mode}) for Bill #${invoiceId}`);
+    // Update local paymentInvoice state so modal reflects immediately
+    setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments } : prev);
+  };
+
+  const handleDeletePayment = async (invoiceId: string, paymentId: string) => {
+    if (!user) return;
+    const invCol = getInvoicesCol();
+    const invRef = doc(invCol, invoiceId);
+    const invSnap = await getDoc(invRef);
+    if (!invSnap.exists()) throw new Error('Invoice not found');
+    const current = invSnap.data() as Invoice;
+    const updatedPayments = (current.payments || []).filter(p => p.id !== paymentId);
+    await updateDoc(invRef, { payments: updatedPayments });
+    // Update local paymentInvoice state so modal reflects immediately
+    setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments } : prev);
+  };
+
   // --- Logo Handlers ---
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Check file size (max 2MB)
-      const maxSize = 2 * 1024 * 1024; // 2MB in bytes
+      const maxSize = 5 * 1024 * 1024; // 5MB limit
       if (file.size > maxSize) {
-        alert(`File size must be less than 2MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
+        alert(`File size must be less than 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
         return;
       }
 
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        const sizeInBytes = file.size;
-        const oneMB = 1024 * 1024;
-
-        // If size is between 1MB and 2MB, compress it
-        if (sizeInBytes > oneMB && sizeInBytes <= maxSize) {
-          const img = new Image();
-          img.src = result;
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-
-            // Calculate new dimensions (maintain aspect ratio)
-            // We'll scale down to 70% to reduce size
-            const scaleFactor = 0.7;
-            canvas.width = img.width * scaleFactor;
-            canvas.height = img.height * scaleFactor;
-
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            // Compress to JPEG with 0.7 quality
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-
-            // Check if compressed size is under 1MB (approx)
-            // Base64 string length * 0.75 is approx byte size
-            const compressedSize = compressedDataUrl.length * 0.75;
-
-            if (compressedSize > oneMB) {
-              alert("Image is too complex to compress under 1MB. Please try a smaller image.");
-              return;
-            }
-
-            // Store compressed preview and wait for explicit Save
-            setPendingLogo(compressedDataUrl);
-          };
-        } else {
-          // Under 1MB, keep as pending preview until user saves
-          setPendingLogo(result);
-        }
+      reader.onloadend = async () => {
+        const rawResult = reader.result as string;
+        const compressed = await compressImageToMaxDataUrl(rawResult, 800, 400, 0.8);
+        handleTempSettingsChange({ ...tempSettings, logoUrl: compressed });
       };
       reader.onerror = () => {
         alert("Error reading file. Please try again.");
@@ -536,77 +1044,25 @@ const App: React.FC = () => {
   };
 
   const removeLogo = () => {
-    // If a pending preview exists, just clear it without prompting
-    if (pendingLogo) {
-      setPendingLogo(null);
-      return;
-    }
-
-    // Confirm before removing saved logo
-    if (!window.confirm('Remove saved logo? This will delete the current logo.')) return;
-    const newSettings = { ...settings, logoUrl: '' };
-    setPendingLogo(null);
-    handleUpdateSettings(newSettings);
-  };
-
-  const savePendingLogo = async () => {
-    if (!pendingLogo) return;
-    setIsSavingLogo(true);
-    try {
-      await handleUpdateSettings({ ...settings, logoUrl: pendingLogo });
-      setPendingLogo(null);
-    } catch (e) {
-      console.error('Error saving logo:', e);
-      alert('Failed to save logo. Please try again.');
-    } finally {
-      setIsSavingLogo(false);
-    }
+    if (!tempSettings.logoUrl) return;
+    handleTempSettingsChange({ ...tempSettings, logoUrl: '' });
   };
 
   // --- Signature Handlers ---
-  const [pendingSignature, setPendingSignature] = useState<string | null>(null);
-  const [isSavingSignature, setIsSavingSignature] = useState(false);
-
   const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const maxSize = 2 * 1024 * 1024; // 2MB
+      const maxSize = 5 * 1024 * 1024; // 5MB limit
       if (file.size > maxSize) {
-        alert(`File size must be less than 2MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
+        alert(`File size must be less than 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
         return;
       }
 
       const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        const sizeInBytes = file.size;
-        const oneMB = 1024 * 1024;
-
-        if (sizeInBytes > oneMB && sizeInBytes <= maxSize) {
-          const img = new Image();
-          img.src = result;
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-
-            const scaleFactor = 0.7;
-            canvas.width = img.width * scaleFactor;
-            canvas.height = img.height * scaleFactor;
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-            const compressedSize = compressedDataUrl.length * 0.75;
-
-            if (compressedSize > oneMB) {
-              alert("Image is too complex to compress under 1MB. Please try a smaller image.");
-              return;
-            }
-            setPendingSignature(compressedDataUrl);
-          };
-        } else {
-          setPendingSignature(result);
-        }
+      reader.onloadend = async () => {
+        const rawResult = reader.result as string;
+        const compressed = await compressImageToMaxDataUrl(rawResult, 600, 300, 0.8);
+        handleTempSettingsChange({ ...tempSettings, signatureUrl: compressed });
       };
       reader.onerror = () => {
         alert("Error reading file. Please try again.");
@@ -616,27 +1072,8 @@ const App: React.FC = () => {
   };
 
   const removeSignature = () => {
-    if (pendingSignature) {
-      setPendingSignature(null);
-      return;
-    }
-    if (!window.confirm('Remove saved signature?')) return;
-    setPendingSignature(null);
-    handleUpdateSettings({ ...settings, signatureUrl: '' });
-  };
-
-  const savePendingSignature = async () => {
-    if (!pendingSignature) return;
-    setIsSavingSignature(true);
-    try {
-      await handleUpdateSettings({ ...settings, signatureUrl: pendingSignature });
-      setPendingSignature(null);
-    } catch (e) {
-      console.error('Error saving signature:', e);
-      alert('Failed to save signature. Please try again.');
-    } finally {
-      setIsSavingSignature(false);
-    }
+    if (!tempSettings.signatureUrl) return;
+    handleTempSettingsChange({ ...tempSettings, signatureUrl: '' });
   };
 
 
@@ -703,12 +1140,22 @@ const App: React.FC = () => {
 
       {/* Sidebar - Hidden when printing */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex-col hidden md:flex no-print">
-        <div className="p-6 border-b border-slate-800">
-          {/* Dynamic Name based on Settings */}
-          <h1 className="text-2xl font-serif text-white font-bold tracking-wide truncate" title={settings.name}>
-            {settings.name || 'BILLING'}
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">v2.0 (Cloud)</p>
+        <div className="p-5 border-b border-slate-800 flex items-center gap-3">
+          {settings.logoUrl ? (
+            <div className="w-9 h-9 rounded-lg bg-white p-1 flex items-center justify-center overflow-hidden shrink-0 shadow-sm border border-slate-700">
+              <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-contain" />
+            </div>
+          ) : (
+            <div className="w-9 h-9 bg-red-600 rounded-lg flex items-center justify-center text-white font-serif font-bold text-lg shrink-0 shadow-sm">
+              {(settings.name?.trim().charAt(0) || settings.logoInitial || 'B').toUpperCase()}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <h1 className="text-lg font-serif text-white font-bold tracking-wide truncate" title={settings.name}>
+              {settings.name || 'BILLING'}
+            </h1>
+            <p className="text-[10px] text-slate-500 font-medium">v2.0 (Cloud)</p>
+          </div>
         </div>
 
         <nav className="flex-1 p-4 space-y-2">
@@ -753,6 +1200,15 @@ const App: React.FC = () => {
           >
             <Settings className="w-5 h-5" /> Settings
           </button>
+
+          {isMainAdminUser(user) && (
+            <button
+              onClick={() => handleTabChange(AppTab.ADMIN_PORTAL)}
+              className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.ADMIN_PORTAL ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}
+            >
+              <ShieldCheck className="w-5 h-5" /> Admin Portal
+            </button>
+          )}
         </nav>
 
         <div className="p-4 border-t border-slate-800">
@@ -765,11 +1221,17 @@ const App: React.FC = () => {
 
       {/* Mobile Header (Fixed at top) */}
       <div className="md:hidden no-print fixed top-0 left-0 w-full bg-slate-900 p-3 flex justify-between items-center z-50 shadow-md h-16">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-red-600 rounded flex items-center justify-center text-white font-serif font-bold">
-            {settings.logoInitial || 'B'}
-          </div>
-          <span className="font-serif font-bold text-white text-lg truncate max-w-[150px]">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {settings.logoUrl ? (
+            <div className="w-8 h-8 rounded-lg bg-white p-0.5 flex items-center justify-center overflow-hidden shrink-0 shadow-xs border border-slate-700">
+              <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-contain" />
+            </div>
+          ) : (
+            <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center text-white font-serif font-bold text-base shrink-0 shadow-xs">
+              {(settings.name?.trim().charAt(0) || settings.logoInitial || 'B').toUpperCase()}
+            </div>
+          )}
+          <span className="font-serif font-bold text-white text-base sm:text-lg truncate max-w-[170px]" title={settings.name}>
             {settings.name || 'BILLING'}
           </span>
         </div>
@@ -808,6 +1270,11 @@ const App: React.FC = () => {
             <button onClick={() => { handleTabChange(AppTab.SETTINGS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.SETTINGS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
               <Settings className="w-5 h-5" /> Settings
             </button>
+            {isMainAdminUser(user) && (
+              <button onClick={() => { handleTabChange(AppTab.ADMIN_PORTAL); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.ADMIN_PORTAL ? 'bg-indigo-600 text-white' : 'hover:bg-slate-100'}`}>
+                <ShieldCheck className="w-5 h-5" /> Admin Portal
+              </button>
+            )}
             <div className="pt-2 border-t mt-2">
               <button onClick={() => { setMobileMenuOpen(false); handleLogout(); }} className="w-full flex items-center gap-2 bg-slate-200 text-slate-600 p-3 rounded hover:bg-slate-300 transition-colors">
                 <LogOut className="w-4 h-4" /> Logout
@@ -832,6 +1299,7 @@ const App: React.FC = () => {
             <InvoiceGenerator
               products={products}
               customers={customers}
+              invoices={invoices}
               settings={settings}
               onUpdateSettings={handleUpdateSettings}
               onSaveInvoice={handleSaveInvoice}
@@ -849,6 +1317,10 @@ const App: React.FC = () => {
               settings={settings}
               onDeleteInvoice={handleDeleteInvoice}
               onEditInvoice={handleEditInvoice}
+              onManagePayments={handleManagePayments}
+              enablePaymentTracking={isPaymentTrackingActive}
+              csvImportAllowed={!!userProfile?.csvImportAllowed}
+              onImportInvoices={handleImportInvoices}
             />
           </div>
         )}
@@ -858,7 +1330,13 @@ const App: React.FC = () => {
             invoices={invoices}
             products={products}
             customers={customers}
+            onAiRequest={handleAiRequest}
+            enablePaymentTracking={isPaymentTrackingActive}
           />
+        )}
+
+        {activeTab === AppTab.ADMIN_PORTAL && isMainAdminUser(user) && (
+          <AdminPortal />
         )}
 
         {activeTab === AppTab.PRODUCTS && (
@@ -881,27 +1359,25 @@ const App: React.FC = () => {
 
               {/* Add/Edit Form */}
               <div ref={productFormRef} className="p-4 md:p-5 border-b border-slate-200 bg-slate-50 shrink-0">
-                <form onSubmit={handleProductSubmit} className="space-y-3">
-                  <div className="flex-1">
+                <form onSubmit={handleProductSubmit} className="space-y-2 sm:space-y-3">
+                  <div>
                     <input
                       name="name"
                       required
                       placeholder="Product Name"
                       value={prodForm.name}
                       onChange={e => setProdForm({ ...prodForm, name: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded text-sm"
+                      className="w-full p-2 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-red-500 focus:outline-none bg-white"
                     />
                   </div>
-                  <div className="w-24 md:w-32">
+                  <div className="flex items-center gap-2 w-full">
                     <input
                       name="packing"
                       placeholder="Size (e.g. 1kg)"
                       value={prodForm.packing}
                       onChange={e => setProdForm({ ...prodForm, packing: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded text-sm"
+                      className="flex-1 min-w-0 p-2 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-red-500 focus:outline-none bg-white"
                     />
-                  </div>
-                  <div className="flex gap-2">
                     <input
                       name="rate"
                       type="number"
@@ -909,31 +1385,37 @@ const App: React.FC = () => {
                       placeholder="Rate"
                       value={prodForm.rate}
                       onChange={e => setProdForm({ ...prodForm, rate: e.target.value })}
-                      className="w-20 md:w-24 p-2 border border-slate-300 rounded text-sm"
+                      className="w-20 sm:w-24 p-2 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-red-500 focus:outline-none bg-white shrink-0"
                     />
-                    <select
-                      name="unit"
-                      value={prodForm.unit}
-                      onChange={e => setProdForm({ ...prodForm, unit: e.target.value })}
-                      className="w-20 md:w-24 p-2 border border-slate-300 rounded text-sm"
-                    >
-                      <option>Kg</option>
-                      <option>Gm</option>
-                      <option>Pkt</option>
-                      <option>Ltr</option>
-                    </select>
-
+                    {(() => {
+                      const activeUnits = (settings.customUnits && settings.customUnits.length > 0)
+                        ? settings.customUnits
+                        : DEFAULT_PRODUCT_UNITS.slice(0, 10);
+                      const unitOptions = Array.from(new Set([...activeUnits, prodForm.unit].filter(Boolean)));
+                      return (
+                        <select
+                          name="unit"
+                          value={prodForm.unit}
+                          onChange={e => setProdForm({ ...prodForm, unit: e.target.value })}
+                          className="w-20 sm:w-24 p-2 border border-slate-300 rounded text-sm bg-white focus:ring-1 focus:ring-red-500 focus:outline-none shrink-0"
+                        >
+                          {unitOptions.map(u => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                     {editingProductId ? (
                       <>
-                        <button type="submit" className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700 flex items-center justify-center min-w-[40px]" title="Update Product">
-                          <Save size={20} />
+                        <button type="submit" className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700 flex items-center justify-center shrink-0 min-w-[36px] h-[38px]" title="Update Product">
+                          <Save size={18} />
                         </button>
-                        <button type="button" onClick={cancelEditProduct} className="bg-slate-400 text-white p-2 rounded hover:bg-slate-500 flex items-center justify-center min-w-[40px]" title="Cancel Edit">
-                          <X size={20} />
+                        <button type="button" onClick={cancelEditProduct} className="bg-slate-400 text-white p-2 rounded hover:bg-slate-500 flex items-center justify-center shrink-0 min-w-[36px] h-[38px]" title="Cancel Edit">
+                          <X size={18} />
                         </button>
                       </>
                     ) : (
-                      <button type="submit" className="bg-red-600 text-white p-2 rounded hover:bg-red-700 flex items-center justify-center min-w-[40px]" title="Add Product">
+                      <button type="submit" className="bg-red-600 text-white p-2 rounded hover:bg-red-700 flex items-center justify-center shrink-0 min-w-[36px] h-[38px]" title="Add Product">
                         <PlusCircle size={20} />
                       </button>
                     )}
@@ -958,11 +1440,14 @@ const App: React.FC = () => {
                         </div>
                       </div>
                       <div className="flex gap-2 pt-3 border-t border-slate-100">
-                        <button onClick={() => startEditProduct(p)} className="flex-1 bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-2 font-medium text-sm transition-colors">
-                          <Edit size={16} /> Edit
+                        <button onClick={() => setSelectedProductForModal(p)} className="flex-1 border border-emerald-200 bg-emerald-50 text-emerald-700 py-2 px-3 rounded-lg hover:bg-emerald-100 flex items-center justify-center gap-1.5 font-bold text-[10px] uppercase tracking-wider transition-colors">
+                          <BarChart3 size={14} /> Analytics
                         </button>
-                        <button onClick={() => deleteProduct(p.id)} className="flex-1 bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-2 font-medium text-sm transition-colors">
-                          <Trash size={16} /> Delete
+                        <button onClick={() => startEditProduct(p)} className="bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
+                          <Edit size={15} /> Edit
+                        </button>
+                        <button onClick={() => deleteProduct(p.id)} className="bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
+                          <Trash size={15} /> Delete
                         </button>
                       </div>
                     </div>
@@ -997,6 +1482,9 @@ const App: React.FC = () => {
                           <td className="p-4"><span className="px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-700">{p.unit}</span></td>
                           <td className="p-4 text-right">
                             <div className="flex justify-end gap-2">
+                              <button onClick={() => setSelectedProductForModal(p)} className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2.5 py-1.5 rounded transition-colors flex items-center gap-1.5 text-xs font-bold border border-emerald-200 shadow-sm" title="View Product Sales & Buying Analysis">
+                                <BarChart3 size={16} /> Sales & Analytics
+                              </button>
                               <button onClick={() => startEditProduct(p)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded transition-colors" title="Edit">
                                 <Edit size={18} />
                               </button>
@@ -1018,6 +1506,50 @@ const App: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Unsaved Products from Past Invoices Banner */}
+                {unsavedInvoiceProducts.length > 0 && (
+                  <div className="p-4 bg-amber-50/80 border-t border-amber-200 mt-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <PackagePlus className="w-5 h-5 text-amber-600" />
+                        <div>
+                          <h3 className="font-bold text-amber-900 text-sm">
+                            Unsaved Products from Past Invoices ({unsavedInvoiceProducts.length})
+                          </h3>
+                          <p className="text-xs text-amber-700">
+                            These products exist on past bills but are not yet saved in your permanent Product catalog.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {unsavedInvoiceProducts.map(u => (
+                        <div key={u.name} className="bg-white p-3 rounded-lg border border-amber-200 shadow-sm flex items-center justify-between gap-2 hover:border-amber-300 transition-colors">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-slate-800 text-sm truncate">{u.name}</div>
+                            <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
+                              {u.rate > 0 && <span className="font-semibold text-red-600">₹{u.rate}</span>}
+                              {u.packing && <span className="text-slate-600">({u.packing})</span>}
+                              <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {u.count} bill{u.count > 1 ? 's' : ''} ({u.totalQty} {u.unit})
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleQuickSaveProduct(u.name, u.rate, u.unit, u.packing)}
+                            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shrink-0 transition-colors shadow-sm cursor-pointer"
+                            title={`Save ${u.name} to permanent product catalog`}
+                          >
+                            <PackagePlus size={14} />
+                            <span>Save Product</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1087,8 +1619,9 @@ const App: React.FC = () => {
                 </form>
               </div>
 
-              {/* Customers List */}
+              {/* Customers & Unsaved Customers Scrollable Area */}
               <div className="flex-1 overflow-y-auto">
+
                 {/* Mobile Card View */}
                 <div className="md:hidden p-3 space-y-3">
                   {customers.map(c => (
@@ -1178,6 +1711,49 @@ const App: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Unsaved Customers from Past Invoices Banner (Rendered AFTER Saved Customers List) */}
+                {unsavedInvoiceCustomers.length > 0 && (
+                  <div className="p-4 bg-amber-50/80 border-t border-amber-200 mt-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <UserPlus className="w-5 h-5 text-amber-600" />
+                        <div>
+                          <h3 className="font-bold text-amber-900 text-sm">
+                            Unsaved Customers from Past Invoices ({unsavedInvoiceCustomers.length})
+                          </h3>
+                          <p className="text-xs text-amber-700">
+                            These customers exist on past bills but are not yet saved in your permanent Customer directory.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {unsavedInvoiceCustomers.map(u => (
+                        <div key={u.name} className="bg-white p-3 rounded-lg border border-amber-200 shadow-sm flex items-center justify-between gap-2 hover:border-amber-300 transition-colors">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-bold text-slate-800 text-sm truncate">{u.name}</div>
+                            <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
+                              {u.city && <span className="font-medium text-slate-600">📍 {u.city}</span>}
+                              <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                {u.count} bill{u.count > 1 ? 's' : ''} (₹{u.totalSpent.toLocaleString('en-IN')})
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleQuickSaveCustomer(u.name, u.city)}
+                            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shrink-0 transition-colors shadow-sm cursor-pointer"
+                            title={`Save ${u.name} to permanent customer list`}
+                          >
+                            <UserPlus size={14} />
+                            <span>Save Customer</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1187,382 +1763,710 @@ const App: React.FC = () => {
           <div className="h-full flex flex-col overflow-hidden">
             <div className="max-w-4xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
               {/* Header */}
-              <div className="p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-purple-50 to-pink-50 shrink-0">
-                <h2 className="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
-                  <Settings className="w-6 h-6 text-purple-600" />
+              <div className="px-4 py-3 md:p-5 border-b border-slate-200 bg-gradient-to-r from-purple-50 to-pink-50 shrink-0">
+                <h2 className="text-lg md:text-2xl font-bold text-slate-800 flex items-center gap-2">
+                  <Settings className="w-5 h-5 md:w-6 md:h-6 text-purple-600" />
                   Business Settings
                 </h2>
-                <p className="text-xs text-slate-500 mt-1">Configure your business information</p>
+                <p className="text-[11px] md:text-xs text-slate-500 mt-0.5">Configure branding, units, invoices & tax</p>
+              </div>
+
+              {/* Sub Navigation Tabs — equal width on mobile */}
+              <div className="border-b border-slate-200 bg-slate-50 px-1.5 sm:px-4 md:px-6 pt-1.5 sm:pt-3 shrink-0">
+                <div className="grid grid-cols-4 gap-0.5 sm:gap-1">
+                  {[
+                    { key: 'branding' as const, icon: <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-600" />, label: 'Branding', fullLabel: 'Branding & Header' },
+                    { key: 'units' as const, icon: <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />, label: 'Units', fullLabel: 'Product Units' },
+                    { key: 'billing' as const, icon: <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600" />, label: 'Invoice', fullLabel: 'Invoice & Signature' },
+                    { key: 'tax_bank' as const, icon: <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />, label: 'Tax/Bank', fullLabel: 'Tax, Bank & UPI' },
+                  ].map(tab => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setSettingsSubTab(tab.key)}
+                      className={`py-2 sm:py-2.5 px-1 sm:px-4 rounded-t-lg font-bold text-[10px] sm:text-sm flex items-center justify-center gap-1 sm:gap-2 border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+                        settingsSubTab === tab.key
+                          ? 'border-purple-600 text-purple-700 bg-white shadow-sm'
+                          : 'border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                      }`}
+                    >
+                      {tab.icon}
+                      <span className="sm:hidden">{tab.label}</span>
+                      <span className="hidden sm:inline">{tab.fullLabel}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Scrollable Content */}
-              <div className="flex-1 overflow-y-auto p-4 md:p-6">
-                <div className="space-y-6">
-                  {/* Visual Settings */}
-                  <div className="grid grid-cols-1 gap-6">
-                    <div className="bg-white p-4 rounded-lg border border-slate-200">
-                      <label className="block text-sm font-bold text-slate-600 mb-2">Theme Color</label>
-                      <div className="flex items-center gap-3">
+              <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
+                <div className="space-y-4 sm:space-y-6">
+
+                  {/* Account Profile Summary (Read-Only) */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                        <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <h4 className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-slate-700 truncate">Account Profile (Read Only)</h4>
+                      </div>
+                      <span className="text-[10px] bg-slate-200 text-slate-600 font-bold px-2 py-0.5 rounded-full uppercase shrink-0 ml-2">Read-Only</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">User Name / Display Name</label>
                         <input
-                          type="color"
-                          value={tempSettings.themeColor || '#dc2626'}
-                          onChange={e => handleTempSettingsChange({ ...tempSettings, themeColor: e.target.value })}
-                          className="h-10 w-20 p-1 border border-slate-300 rounded cursor-pointer"
+                          type="text"
+                          readOnly
+                          value={userProfile?.displayName || user?.email?.split('@')[0] || 'N/A'}
+                          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none cursor-default"
                         />
-                        <span className="text-sm text-slate-500 font-medium">{tempSettings.themeColor || '#dc2626'}</span>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">Account Email</label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={userProfile?.email || user?.email || 'N/A'}
+                          className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none cursor-default"
+                        />
                       </div>
                     </div>
+                  </div>
 
-                    <div className="bg-white p-4 rounded-lg border border-slate-200">
-                      <label className="block text-sm font-bold text-slate-600 mb-4">Business Logo</label>
-                      <div className="flex flex-col gap-4">
-                        <div className="flex flex-wrap gap-3 items-center">
-                          <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-2.5 px-5 rounded-lg flex items-center gap-2 text-sm w-full md:w-auto justify-center transition-all shadow-sm">
-                            <Upload size={18} />
-                            <span className="font-bold">Upload</span>
-                            <input type="file" accept="image/png,image:jpeg,image/jpg,image/webp" onChange={handleLogoUpload} className="hidden" />
-                          </label>
+                  {/* SUB-TAB 1: Branding & Header */}
+                  {settingsSubTab === 'branding' && (
+                    <div className="space-y-6">
+                      <h3 className="font-bold text-slate-800 text-base flex items-center gap-2 border-b border-slate-100 pb-2">
+                        <Settings className="w-5 h-5 text-purple-600" />
+                        Branding, Logo & Header Configuration
+                      </h3>
 
+                      {/* Visual Settings */}
+                      <div className="grid grid-cols-1 gap-6">
+                        <div className="bg-white p-4 rounded-lg border border-slate-200">
+                          <label className="block text-sm font-bold text-slate-600 mb-2">Theme Color</label>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="color"
+                              value={tempSettings.themeColor || '#dc2626'}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, themeColor: e.target.value })}
+                              className="h-10 w-20 p-1 border border-slate-300 rounded cursor-pointer"
+                            />
+                            <span className="text-sm text-slate-500 font-medium">{tempSettings.themeColor || '#dc2626'}</span>
+                          </div>
+                        </div>
 
+                        <div className="bg-white p-4 rounded-lg border border-slate-200">
+                          <label className="block text-sm font-bold text-slate-600 mb-4">Business Logo</label>
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-wrap gap-3 items-center">
+                              <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-2.5 px-5 rounded-lg flex items-center gap-2 text-sm w-full md:w-auto justify-center transition-all shadow-sm">
+                                <Upload size={18} />
+                                <span className="font-bold">Upload Logo</span>
+                                <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={handleLogoUpload} className="hidden" />
+                              </label>
 
-                          {(settings.logoUrl || pendingLogo) && (
-                            <div className="flex items-center gap-3 w-full md:w-auto">
-                              <button
-                                onClick={() => { if (pendingLogo) { setPendingLogo(null); } else { removeLogo(); } }}
-                                className="flex-1 md:flex-initial text-red-600 hover:text-white hover:bg-red-600 p-2.5 border border-red-200 rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-bold"
-                              >
-                                <X size={18} />
-                                <span>Remove</span>
-                              </button>
-
-                              {pendingLogo && (
+                              {tempSettings.logoUrl && (
                                 <button
-                                  onClick={savePendingLogo}
-                                  disabled={isSavingLogo}
-                                  className="flex-1 md:flex-initial bg-green-600 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2.5 px-5 rounded-lg hover:bg-green-700 text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all"
+                                  type="button"
+                                  onClick={removeLogo}
+                                  className="text-red-600 hover:text-white hover:bg-red-600 p-2.5 border border-red-200 rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-bold"
                                 >
-                                  {isSavingLogo ? <Loader2 className="animate-spin w-4 h-4" /> : null}
-                                  <span>{isSavingLogo ? 'Saving...' : 'Confirm Save'}</span>
+                                  <X size={18} />
+                                  <span>Remove Logo</span>
                                 </button>
                               )}
+                            </div>
+                          </div>
+
+                          {tempSettings.logoUrl && (
+                            <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-inner">
+                              <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center mb-6">
+                                <div className="flex items-center gap-3">
+                                  <div className="bg-slate-200 px-3 py-1 rounded-full">
+                                    <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                      Logo Size: {tempSettings.logoWidth || 80}px
+                                    </label>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-4 w-full md:w-2/3">
+                                  <input
+                                    type="range"
+                                    min="40"
+                                    max="350"
+                                    value={tempSettings.logoWidth || 80}
+                                    onChange={(e) => handleTempSettingsChange({ ...tempSettings, logoWidth: parseInt(e.target.value) || 80 })}
+                                    className="flex-1 h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600 shadow-inner"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 text-center">Live Header Preview (Actual Size)</div>
+                              <div className="overflow-x-auto no-scrollbar border-2 bg-white shadow-lg rounded-xl" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
+                                <div className="min-w-[794px] border-b-2 p-4 font-serif-custom text-center relative" style={{ color: tempSettings.themeColor || '#dc2626', borderColor: tempSettings.themeColor || '#dc2626' }}>
+                                  <img
+                                    src={tempSettings.logoUrl}
+                                    alt="Logo"
+                                    className="absolute left-4 top-4 object-contain"
+                                    style={{ width: `${tempSettings.logoWidth || 80}px`, maxHeight: '120px' }}
+                                  />
+                                  <div className="mt-2">
+                                    <h1 className="text-5xl font-bold mb-1" style={{ color: tempSettings.themeColor || '#dc2626', letterSpacing: tempSettings.nameLetterSpacing || '0.05em' }}>{tempSettings.name || 'Business Name'}</h1>
+                                    <h2 className="text-2xl font-bold" style={{ color: tempSettings.themeColor || '#dc2626' }}>{tempSettings.subName || ''}</h2>
+                                    <p className="mt-1 text-sm" style={{ color: tempSettings.themeColor || '#dc2626' }}>{tempSettings.address} {tempSettings.mobile ? `M.: ${tempSettings.mobile}` : ''}</p>
+                                  </div>
+                                </div>
+                              </div>
+                              <p className="text-center text-slate-400 text-[10px] mt-4 font-medium italic">This preview matches exactly how your logo and header will appear on printed invoices (794px width, A4 size).</p>
                             </div>
                           )}
                         </div>
-
-
                       </div>
 
-                      {(settings.logoUrl || pendingLogo) && (
-                        <div className="mt-6 bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-inner">
-                          <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center mb-6">
-                            <div className="flex items-center gap-3">
-                              <div className="bg-slate-200 px-3 py-1 rounded-full">
-                                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Logo Size: {pendingLogoWidth ?? settings.logoWidth ?? 80}px</label>
-                              </div>
-                              {pendingLogo && <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-bold uppercase border border-yellow-200">Unsaved Changes</span>}
-                            </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-600 mb-1">Business Name (Header)</label>
+                        <input
+                          value={tempSettings.name}
+                          onChange={e => handleTempSettingsChange({ ...tempSettings, name: e.target.value })}
+                          className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                        />
 
-                            <div className="flex items-center gap-4 w-full md:w-2/3">
-                              <input
-                                type="range"
-                                min="40"
-                                max="350"
-                                value={pendingLogoWidth ?? (settings.logoWidth || 80)}
-                                onChange={(e) => setPendingLogoWidth(parseInt(e.target.value))}
-                                className="flex-1 h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600 shadow-inner"
-                              />
-
-                              {(pendingLogoWidth !== null && pendingLogoWidth !== (settings.logoWidth || 80)) && (
-                                <button
-                                  onClick={async () => {
-                                    const sizeToSave = pendingLogoWidth;
-                                    setIsSavingSize(true);
-                                    try {
-                                      await handleUpdateSettings({ ...settings, logoWidth: sizeToSave });
-                                    } catch (e) {
-                                      console.error('Error saving logo size:', e);
-                                      alert('Failed to save logo size.');
-                                    } finally {
-                                      setIsSavingSize(false);
-                                      setPendingLogoWidth(null);
-                                    }
-                                  }}
-                                  disabled={isSavingSize}
-                                  className="bg-blue-600 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2 px-4 rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all min-w-[110px]"
-                                >
-                                  {isSavingSize ? <><Loader2 className="animate-spin w-4 h-4" /><span>Saving...</span></> : <><Save size={16} /><span>Save Size</span></>}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 text-center">Live Header Preview (Actual Size)</div>
-                          <div className="overflow-x-auto no-scrollbar border-2 bg-white shadow-lg rounded-xl" style={{ borderColor: settings.themeColor || '#dc2626' }}>
-                            <div className="min-w-[794px] border-b-2 p-4 font-serif-custom text-center relative" style={{ color: settings.themeColor || '#dc2626', borderColor: settings.themeColor || '#dc2626' }}>
-                              <img
-                                src={pendingLogo || settings.logoUrl}
-                                alt="Logo"
-                                className="absolute left-4 top-4 object-contain"
-                                style={{ width: `${pendingLogoWidth ?? (settings.logoWidth || 80)}px`, maxHeight: '120px' }}
-                              />
-                              <div className="mt-2">
-                                <h1 className="text-5xl font-bold tracking-wider mb-1" style={{ color: settings.themeColor || '#dc2626' }}>{settings.name}</h1>
-                                <h2 className="text-2xl font-bold" style={{ color: settings.themeColor || '#dc2626' }}>{settings.subName}</h2>
-                                <p className="mt-1 text-sm" style={{ color: settings.themeColor || '#dc2626' }}>{settings.address} M.: {settings.mobile}</p>
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-center text-slate-400 text-[10px] mt-4 font-medium italic">This preview matches exactly how your logo will appear on printed invoices (794px width, A4 size).</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="border-t border-slate-100 my-4"></div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Business Name (Header)</label>
-                    <input
-                      value={tempSettings.name}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, name: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Subtitle / Full Name</label>
-                    <input
-                      value={tempSettings.subName}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, subName: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Address</label>
-                    <input
-                      value={tempSettings.address}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, address: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Mobile</label>
-                    <input
-                      value={tempSettings.mobile}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, mobile: e.target.value })}
-                      className="w-full p-2 border border-slate-300 rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Logo Initial (Fallback)</label>
-                    <input
-                      value={tempSettings.logoInitial}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, logoInitial: e.target.value })}
-                      maxLength={1}
-                      className="w-16 p-2 border border-slate-300 rounded text-center"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Signature Name (Optional)</label>
-                    <input
-                      value={tempSettings.signatureName || ''}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, signatureName: e.target.value })}
-                      placeholder="e.g., S.J.B.G.U (defaults to Business Name if empty)"
-                      className="w-full p-2 border border-slate-300 rounded"
-                    />
-                    <p className="text-xs text-slate-500 mt-1">This will appear as "For, [Signature Name]" at the bottom of the invoice. Leave empty to use Business Name.</p>
-                  </div>
-
-                  <div className="bg-white p-4 rounded-lg border border-slate-200">
-                    <label className="block text-sm font-bold text-slate-600 mb-3">Signature Image (Optional)</label>
-                    <div className="flex flex-col gap-3">
-                      <div className="flex flex-wrap gap-3 items-center">
-                        <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-2.5 px-5 rounded-lg flex items-center gap-2 text-sm w-full md:w-auto justify-center transition-all shadow-sm">
-                          <Upload size={18} />
-                          <span className="font-bold">Upload Signature</span>
-                          <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={handleSignatureUpload} className="hidden" />
-                        </label>
-
-                        {(settings.signatureUrl || pendingSignature) && (
-                          <div className="flex items-center gap-3 w-full md:w-auto">
-                            <button
-                              onClick={() => { if (pendingSignature) { setPendingSignature(null); } else { removeSignature(); } }}
-                              className="flex-1 md:flex-initial text-red-600 hover:text-white hover:bg-red-600 p-2.5 border border-red-200 rounded-lg transition-all flex items-center justify-center gap-2 text-sm font-bold"
+                        {/* Business Name Character Spacing Control */}
+                        <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 mt-2.5">
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                            Character Spacing (Letter Spacing)
+                          </label>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <select
+                              value={tempSettings.nameLetterSpacing || '0.05em'}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, nameLetterSpacing: e.target.value })}
+                              className="p-2 border border-slate-300 rounded-lg text-sm bg-white font-medium cursor-pointer"
                             >
-                              <X size={18} />
-                              <span>Remove</span>
-                            </button>
+                              <option value="-0.05em">Very Tight (-2px)</option>
+                              <option value="-0.025em">Tight (-1px)</option>
+                              <option value="0em">Normal (0px)</option>
+                              <option value="0.025em">Wide (+1px)</option>
+                              <option value="0.05em">Wider (+2px) [Default]</option>
+                              <option value="0.08em">Extra Wide (+3px)</option>
+                              <option value="0.1em">Widest (+4px)</option>
+                              <option value="0.15em">Ultra Wide (+6px)</option>
+                            </select>
+                            <span className="text-xs text-slate-500 font-medium">
+                              Adjust spacing between letters in your business title header.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
 
-                            {pendingSignature && (
-                              <button
-                                onClick={savePendingSignature}
-                                disabled={isSavingSignature}
-                                className="flex-1 md:flex-initial bg-green-600 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2.5 px-5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all"
+                      <div>
+                        <label className="block text-sm font-bold text-slate-600 mb-1">Subtitle / Full Name</label>
+                        <input
+                          value={tempSettings.subName}
+                          onChange={e => handleTempSettingsChange({ ...tempSettings, subName: e.target.value })}
+                          className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-bold text-slate-600 mb-1">Address</label>
+                        <input
+                          value={tempSettings.address}
+                          onChange={e => handleTempSettingsChange({ ...tempSettings, address: e.target.value })}
+                          className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-slate-600 mb-1">Mobile</label>
+                          <input
+                            value={tempSettings.mobile}
+                            onChange={e => handleTempSettingsChange({ ...tempSettings, mobile: e.target.value })}
+                            className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold text-slate-600 mb-1">Logo Initial (Fallback)</label>
+                          <input
+                            value={tempSettings.logoInitial}
+                            onChange={e => handleTempSettingsChange({ ...tempSettings, logoInitial: e.target.value })}
+                            maxLength={1}
+                            className="w-20 p-2.5 border border-slate-300 rounded-lg text-center font-bold text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SUB-TAB 2: Product Units */}
+                  {settingsSubTab === 'units' && (
+                    <div className="space-y-4 sm:space-y-6">
+                      <div className="bg-slate-50 p-3 sm:p-4 md:p-5 rounded-xl border border-slate-200">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-0.5 flex items-center gap-2">
+                          <Package className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+                          Product Measurement Units
+                        </h3>
+                        <p className="text-[11px] sm:text-xs text-slate-500 mb-3 sm:mb-4">
+                          Select which units appear in your product dropdown, or add custom units.
+                        </p>
+
+                        {/* Active Selected Units */}
+                        <div className="mb-3 sm:mb-4">
+                          <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                            Active Units ({ (tempSettings.customUnits || DEFAULT_PRODUCT_UNITS.slice(0, 10)).length })
+                          </label>
+                          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                            {(tempSettings.customUnits || DEFAULT_PRODUCT_UNITS.slice(0, 10)).map((u) => (
+                              <span
+                                key={u}
+                                className="inline-flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-bold bg-indigo-100 text-indigo-800 border border-indigo-200 shadow-sm"
                               >
-                                {isSavingSignature ? <Loader2 className="animate-spin w-4 h-4" /> : <Save size={18} />}
-                                <span>Save</span>
+                                {u}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const current = tempSettings.customUnits || DEFAULT_PRODUCT_UNITS.slice(0, 10);
+                                    const updated = current.filter(x => x !== u);
+                                    handleTempSettingsChange({ ...tempSettings, customUnits: updated });
+                                  }}
+                                  className="hover:bg-indigo-200 rounded-full p-0.5 text-indigo-600 hover:text-indigo-900 transition-colors cursor-pointer"
+                                  title={`Remove ${u}`}
+                                >
+                                  <X size={12} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Add Custom Unit Form */}
+                        <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                          <input
+                            type="text"
+                            placeholder="e.g. Carton, Roll, Set..."
+                            value={newUnitInput}
+                            onChange={(e) => setNewUnitInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddCustomUnit();
+                              }
+                            }}
+                            className="flex-1 min-w-0 p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddCustomUnit}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm flex items-center gap-1.5 transition-all shadow-sm shrink-0 cursor-pointer"
+                          >
+                            <PlusCircle size={14} />
+                            <span>Add</span>
+                          </button>
+                        </div>
+
+                        {/* Quick Add Available Presets */}
+                        <div>
+                          <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                            Quick Add Preset Units
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {DEFAULT_PRODUCT_UNITS.filter(u => !(tempSettings.customUnits || DEFAULT_PRODUCT_UNITS.slice(0, 10)).includes(u)).map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => {
+                                  const current = tempSettings.customUnits || DEFAULT_PRODUCT_UNITS.slice(0, 10);
+                                  handleTempSettingsChange({ ...tempSettings, customUnits: [...current, preset] });
+                                }}
+                                className="px-2 sm:px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-semibold bg-white hover:bg-slate-200 text-slate-700 border border-slate-300 flex items-center gap-1 transition-all cursor-pointer"
+                              >
+                                <PlusCircle size={11} className="text-slate-500" />
+                                {preset}
                               </button>
-                            )}
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SUB-TAB 3: Invoice & Signature */}
+                  {settingsSubTab === 'billing' && (
+                    <div className="space-y-4 sm:space-y-6">
+                      {/* Bill Table Column Headers & Merging Settings */}
+                      <div className="bg-slate-50 p-3 sm:p-4 md:p-5 rounded-xl border border-slate-200">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-0.5 flex items-center gap-2">
+                          <Table className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600 shrink-0" />
+                          Column Headers & Merging
+                        </h3>
+                        <p className="text-[11px] sm:text-xs text-slate-500 mb-3 sm:mb-4">
+                          Customize column headers or merge Packing and Qty into one column.
+                        </p>
+
+                        {/* Merge Packing & Qty Toggle */}
+                        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 mb-3 sm:mb-4">
+                          <label htmlFor="mergePackingAndQty" className="flex items-start gap-2.5 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              id="mergePackingAndQty"
+                              checked={tempSettings.columnHeaders?.mergePackingAndQty || false}
+                              onChange={e => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: {
+                                  ...DEFAULT_COLUMN_HEADERS,
+                                  ...tempSettings.columnHeaders,
+                                  mergePackingAndQty: e.target.checked
+                                }
+                              })}
+                              className="w-4 h-4 sm:w-5 sm:h-5 accent-purple-600 cursor-pointer mt-0.5 shrink-0"
+                            />
+                            <div>
+                              <span className="text-xs sm:text-sm font-bold text-slate-800 block">Merge Packing & Qty column</span>
+                              <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">Combines both into one column (e.g., "50 kg (2 Pcs)").</span>
+                            </div>
+                          </label>
+                        </div>
+
+                        {/* Custom Column Header Names */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">
+                          <div>
+                            <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">No. Header</label>
+                            <input
+                              value={tempSettings.columnHeaders?.snHeader ?? 'No.'}
+                              onChange={e => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, snHeader: e.target.value }
+                              })}
+                              placeholder="No."
+                              className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">Details</label>
+                            <input
+                              value={tempSettings.columnHeaders?.particularsHeader ?? 'Details'}
+                              onChange={e => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, particularsHeader: e.target.value }
+                              })}
+                              placeholder="Details"
+                              className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                            />
+                          </div>
+
+                          {tempSettings.columnHeaders?.mergePackingAndQty ? (
+                            <div>
+                              <label className="block text-[10px] sm:text-xs font-bold text-purple-700 uppercase tracking-wider mb-1">Merged Header</label>
+                              <input
+                                value={tempSettings.columnHeaders?.mergedPackingQtyHeader ?? 'Packing / Qty'}
+                                onChange={e => handleTempSettingsChange({
+                                  ...tempSettings,
+                                  columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, mergedPackingQtyHeader: e.target.value }
+                                })}
+                                placeholder="Packing / Qty"
+                                className="w-full p-2 sm:p-2.5 border border-purple-300 rounded-lg text-sm bg-purple-50 font-bold"
+                              />
+                            </div>
+                          ) : (
+                            <>
+                              <div>
+                                <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">Packing</label>
+                                <input
+                                  value={tempSettings.columnHeaders?.packingHeader ?? 'Packing'}
+                                  onChange={e => handleTempSettingsChange({
+                                    ...tempSettings,
+                                    columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, packingHeader: e.target.value }
+                                  })}
+                                  placeholder="Packing"
+                                  className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">Qty</label>
+                                <input
+                                  value={tempSettings.columnHeaders?.qtyHeader ?? 'Qty'}
+                                  onChange={e => handleTempSettingsChange({
+                                    ...tempSettings,
+                                    columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, qtyHeader: e.target.value }
+                                  })}
+                                  placeholder="Qty"
+                                  className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          <div>
+                            <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">Rate</label>
+                            <input
+                              value={tempSettings.columnHeaders?.rateHeader ?? 'Rate'}
+                              onChange={e => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, rateHeader: e.target.value }
+                              })}
+                              placeholder="Rate"
+                              className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">Amount</label>
+                            <input
+                              value={tempSettings.columnHeaders?.amountHeader ?? 'Amount'}
+                              onChange={e => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: { ...DEFAULT_COLUMN_HEADERS, ...tempSettings.columnHeaders, amountHeader: e.target.value }
+                              })}
+                              placeholder="Amount"
+                              className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Invoice Sequence */}
+                      <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-1 flex items-center gap-2">
+                          <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
+                          Invoice Auto-Increment
+                        </h3>
+                        <label className="block text-xs sm:text-sm font-bold text-slate-600 mb-1">Next Invoice Number</label>
+                        <p className="text-[11px] sm:text-xs text-slate-500 mb-2 sm:mb-3">Manually update this only if you need to reset or skip invoice numbers.</p>
+                        <input
+                          type="number"
+                          value={tempSettings.nextInvoiceNumber}
+                          onChange={e => handleTempSettingsChange({ ...tempSettings, nextInvoiceNumber: parseInt(e.target.value) || 1 })}
+                          className="w-full sm:w-36 p-2.5 sm:p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none font-bold"
+                        />
+                      </div>
+
+                      {/* Signature Section */}
+                      <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-3 flex items-center gap-2">
+                          <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600 shrink-0" />
+                          Signature Settings
+                        </h3>
+                        <div className="space-y-3 sm:space-y-4">
+                          <div>
+                            <label className="block text-xs sm:text-sm font-bold text-slate-600 mb-1">Signature Name (Optional)</label>
+                            <input
+                              value={tempSettings.signatureName || ''}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, signatureName: e.target.value })}
+                              placeholder="e.g., S.J.B.G.U"
+                              className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm"
+                            />
+                            <p className="text-[11px] sm:text-xs text-slate-500 mt-1">Appears as "For, [Name]" on printed invoices.</p>
+                          </div>
+
+                          <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-200">
+                            <label className="block text-xs sm:text-sm font-bold text-slate-600 mb-2 sm:mb-3">Signature Image (Optional)</label>
+                            <div className="flex flex-col gap-2.5 sm:gap-3">
+                              <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 items-stretch sm:items-center">
+                                <label className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 py-2 sm:py-2.5 px-4 sm:px-5 rounded-lg flex items-center gap-2 text-sm justify-center transition-all shadow-sm">
+                                  <Upload size={16} />
+                                  <span className="font-bold text-xs sm:text-sm">Upload Signature</span>
+                                  <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={handleSignatureUpload} className="hidden" />
+                                </label>
+
+                                {tempSettings.signatureUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={removeSignature}
+                                    className="text-red-600 hover:text-white hover:bg-red-600 py-2 sm:py-2.5 px-4 border border-red-200 rounded-lg transition-all flex items-center justify-center gap-2 text-xs sm:text-sm font-bold cursor-pointer"
+                                  >
+                                    <X size={16} />
+                                    <span>Remove</span>
+                                  </button>
+                                )}
+                              </div>
+
+                              {tempSettings.signatureUrl && (
+                                <div className="p-2.5 sm:p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                  <p className="text-[10px] sm:text-xs font-bold text-slate-500 mb-1.5">Preview:</p>
+                                  <img
+                                    src={tempSettings.signatureUrl}
+                                    alt="Signature"
+                                    className="max-h-16 sm:max-h-20 object-contain bg-white p-2 border border-slate-200 rounded filter contrast-[180%] brightness-[80%]"
+                                  />
+                                </div>
+                              )}
+
+                              <p className="text-[11px] sm:text-xs text-slate-500">Upload a transparent PNG for best results. Max 2MB.</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Payment Tracking Feature Toggle */}
+                      <div className="bg-purple-50 p-3 sm:p-4 rounded-xl border border-purple-200">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-2 sm:mb-3 flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-purple-600 shrink-0" />
+                          Payment Tracking
+                        </h3>
+                        <label htmlFor="enablePaymentTracking" className="flex items-start gap-2.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            id="enablePaymentTracking"
+                            disabled={!isPaymentTrackingAllowed}
+                            checked={isPaymentTrackingAllowed ? (tempSettings.enablePaymentTracking !== false) : false}
+                            onChange={e => handleTempSettingsChange({ ...tempSettings, enablePaymentTracking: e.target.checked })}
+                            className="w-4 h-4 sm:w-5 sm:h-5 accent-purple-600 cursor-pointer disabled:cursor-not-allowed mt-0.5 shrink-0"
+                          />
+                          <div>
+                            <span className={`text-xs sm:text-sm font-bold text-slate-700 block ${!isPaymentTrackingAllowed ? 'opacity-60' : ''}`}>
+                              Enable Payment Tracking (Cash, UPI, Partial)
+                            </span>
+                            <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">
+                              Track partial payments, balances, and payment modes. Turning off hides badges without deleting data.
+                            </span>
+                          </div>
+                        </label>
+                        {!isPaymentTrackingAllowed && (
+                          <div className="mt-2.5 text-[11px] sm:text-xs font-bold text-red-600 bg-red-50 border border-red-200 p-2.5 rounded-lg flex items-start gap-2">
+                            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                            <span>Payment tracking has been blocked by an administrator.</span>
                           </div>
                         )}
                       </div>
-
-                      {(pendingSignature || settings.signatureUrl) && (
-                        <div className="mt-2 p-3 bg-slate-50 rounded border border-slate-200">
-                          <p className="text-xs font-bold text-slate-500 mb-2">Preview:</p>
-                          <img
-                            src={pendingSignature || settings.signatureUrl}
-                            alt="Signature"
-                            className="max-h-20 object-contain bg-white p-2 border border-slate-200 rounded"
-                          />
-                        </div>
-                      )}
-
-                      <p className="text-xs text-slate-500">Upload a transparent PNG signature for best results. Max 2MB.</p>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="border-t border-slate-100 my-4"></div>
+                  {/* SUB-TAB 4: Tax, Bank & UPI */}
+                  {settingsSubTab === 'tax_bank' && (
+                    <div className="space-y-6">
+                      {/* GST Settings */}
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-base mb-2 flex items-center gap-2">
+                          <BarChart3 className="w-5 h-5 text-emerald-600" />
+                          Tax & GST Settings
+                        </h3>
+                        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                          <div className="flex items-center gap-3 mb-4">
+                            <input
+                              type="checkbox"
+                              id="enableGst"
+                              checked={tempSettings.enableGst}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, enableGst: e.target.checked })}
+                              className="w-5 h-5 accent-red-600 cursor-pointer"
+                            />
+                            <label htmlFor="enableGst" className="text-sm font-bold text-slate-700 cursor-pointer select-none">Enable GST Calculation</label>
+                          </div>
 
-                  {/* GST Settings */}
-                  <h3 className="font-bold text-slate-800">Tax Settings</h3>
-                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <div className="flex items-center gap-3 mb-4">
-                      <input
-                        type="checkbox"
-                        id="enableGst"
-                        checked={tempSettings.enableGst}
-                        onChange={e => handleTempSettingsChange({ ...tempSettings, enableGst: e.target.checked })}
-                        className="w-5 h-5 accent-red-600"
-                      />
-                      <label htmlFor="enableGst" className="text-sm font-bold text-slate-700 cursor-pointer select-none">Enable GST Calculation</label>
-                    </div>
-
-                    {tempSettings.enableGst && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-8">
-                        <div>
-                          <label className="block text-sm font-bold text-slate-600 mb-1">GSTIN (Optional)</label>
-                          <input
-                            value={tempSettings.gstin || ''}
-                            onChange={e => handleTempSettingsChange({ ...tempSettings, gstin: e.target.value })}
-                            placeholder="e.g. 24ABCDE1234F1Z5"
-                            className="w-full p-2 border border-slate-300 rounded"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-bold text-slate-600 mb-1">Default GST Rate (%)</label>
-                          <input
-                            type="number"
-                            value={tempSettings.defaultGstRate || 0}
-                            onChange={e => handleTempSettingsChange({ ...tempSettings, defaultGstRate: parseFloat(e.target.value) })}
-                            className="w-full p-2 border border-slate-300 rounded"
-                          />
+                          {tempSettings.enableGst && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-8">
+                              <div>
+                                <label className="block text-sm font-bold text-slate-600 mb-1">GSTIN (Optional)</label>
+                                <input
+                                  value={tempSettings.gstin || ''}
+                                  onChange={e => handleTempSettingsChange({ ...tempSettings, gstin: e.target.value })}
+                                  placeholder="e.g. 24ABCDE1234F1Z5"
+                                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-bold text-slate-600 mb-1">Default GST Rate (%)</label>
+                                <input
+                                  type="number"
+                                  value={tempSettings.defaultGstRate || 0}
+                                  onChange={e => handleTempSettingsChange({ ...tempSettings, defaultGstRate: parseFloat(e.target.value) })}
+                                  className="w-full p-2.5 border border-slate-300 rounded-lg text-sm font-bold"
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="border-t border-slate-100 my-4"></div>
-
-                  {/* Bank Details Section */}
-                  <h3 className="font-bold text-slate-800">Bank Details (Printed on Bill)</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-600 mb-1">Bank Name</label>
-                      <input
-                        value={tempSettings.bankName || ''}
-                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankName: e.target.value })}
-                        placeholder="e.g. Kotak Mahindra Bank"
-                        className="w-full p-2 border border-slate-300 rounded"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-600 mb-1">Account Number</label>
-                      <input
-                        value={tempSettings.bankAccountNumber || ''}
-                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankAccountNumber: e.target.value })}
-                        placeholder="e.g. 1234567890"
-                        className="w-full p-2 border border-slate-300 rounded"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-600 mb-1">IFSC Code</label>
-                      <input
-                        value={tempSettings.bankIfsc || ''}
-                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankIfsc: e.target.value })}
-                        placeholder="e.g. KKBK0001234"
-                        className="w-full p-2 border border-slate-300 rounded"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-bold text-slate-600 mb-1">Branch</label>
-                      <input
-                        value={tempSettings.bankBranch || ''}
-                        onChange={e => handleTempSettingsChange({ ...tempSettings, bankBranch: e.target.value })}
-                        placeholder="e.g. Main Branch"
-                        className="w-full p-2 border border-slate-300 rounded"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="border-t border-slate-100 my-4"></div>
-
-                  {/* UPI Settings Section */}
-                  <h3 className="font-bold text-slate-800">UPI Payment Settings</h3>
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <div className="flex items-center gap-3 mb-4">
-                      <input
-                        type="checkbox"
-                        id="showUpiQr"
-                        checked={tempSettings.showUpiQr}
-                        onChange={e => handleTempSettingsChange({ ...tempSettings, showUpiQr: e.target.checked })}
-                        className="w-5 h-5 accent-blue-600"
-                      />
-                      <label htmlFor="showUpiQr" className="text-sm font-bold text-slate-700 cursor-pointer select-none">Show UPI QR Code on Bill</label>
-                    </div>
-
-                    {tempSettings.showUpiQr && (
-                      <div className="pl-8">
-                        <label className="block text-sm font-bold text-slate-600 mb-1">UPI ID (VPA)</label>
-                        <input
-                          value={tempSettings.upiId || ''}
-                          onChange={e => handleTempSettingsChange({ ...tempSettings, upiId: e.target.value })}
-                          placeholder="e.g. yourname@okaxis or yournumber@upi"
-                          className="w-full p-2 border border-slate-300 rounded"
-                        />
-                        <p className="text-xs text-slate-500 mt-2 italic">A QR code will be dynamically generated for this UPI ID and displayed next to bank details.</p>
+                      {/* Bank Details Section */}
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-base mb-2">Bank Details (Printed on Invoice)</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-lg border border-slate-200">
+                          <div>
+                            <label className="block text-sm font-bold text-slate-600 mb-1">Bank Name</label>
+                            <input
+                              value={tempSettings.bankName || ''}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, bankName: e.target.value })}
+                              placeholder="e.g. Kotak Mahindra Bank"
+                              className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-bold text-slate-600 mb-1">Account Number</label>
+                            <input
+                              value={tempSettings.bankAccountNumber || ''}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, bankAccountNumber: e.target.value })}
+                              placeholder="e.g. 1234567890"
+                              className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-bold text-slate-600 mb-1">IFSC Code</label>
+                            <input
+                              value={tempSettings.bankIfsc || ''}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, bankIfsc: e.target.value })}
+                              placeholder="e.g. KKBK0001234"
+                              className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-bold text-slate-600 mb-1">Branch</label>
+                            <input
+                              value={tempSettings.bankBranch || ''}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, bankBranch: e.target.value })}
+                              placeholder="e.g. Main Branch"
+                              className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                            />
+                          </div>
+                        </div>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="border-t border-slate-100 my-6"></div>
+                      {/* UPI Settings Section */}
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-base mb-2">UPI Payment & Dynamic QR Code</h3>
+                        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                          <div className="flex items-center gap-3 mb-4">
+                            <input
+                              type="checkbox"
+                              id="showUpiQr"
+                              checked={tempSettings.showUpiQr}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, showUpiQr: e.target.checked })}
+                              className="w-5 h-5 accent-blue-600 cursor-pointer"
+                            />
+                            <label htmlFor="showUpiQr" className="text-sm font-bold text-slate-700 cursor-pointer select-none">Show Dynamic UPI QR Code on Bill</label>
+                          </div>
 
-                  {/* Invoice Sequence */}
-                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <h3 className="font-bold text-slate-800 mb-3">Invoice Settings</h3>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">Next Invoice Number (Auto-Increment)</label>
-                    <p className="text-xs text-slate-500 mb-3">Manually update this only if you need to reset or skip numbers.</p>
-                    <input
-                      type="number"
-                      value={tempSettings.nextInvoiceNumber}
-                      onChange={e => handleTempSettingsChange({ ...tempSettings, nextInvoiceNumber: parseInt(e.target.value) || 1 })}
-                      className="w-full md:w-32 p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
-                    />
-                  </div>
+                          {tempSettings.showUpiQr && (
+                            <div className="pl-8">
+                              <label className="block text-sm font-bold text-slate-600 mb-1">UPI ID (VPA)</label>
+                              <input
+                                value={tempSettings.upiId || ''}
+                                onChange={e => handleTempSettingsChange({ ...tempSettings, upiId: e.target.value })}
+                                placeholder="e.g. yourname@okaxis or yournumber@upi"
+                                className="w-full p-2.5 border border-slate-300 rounded-lg text-sm"
+                              />
+                              <p className="text-xs text-slate-500 mt-2 italic">A QR code will be dynamically generated for this UPI ID and displayed next to bank details on invoices.</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Save Button */}
                   {hasUnsavedSettings && (
-                    <div className="sticky bottom-0 mt-6 p-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg shadow-lg">
-                      <div className="flex items-center justify-between gap-4">
+                    <div className="sticky bottom-0 mt-4 sm:mt-6 p-3 sm:p-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg shadow-lg">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-4">
                         <div className="flex items-center gap-2">
-                          <svg className="w-5 h-5 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                          <svg className="w-5 h-5 text-yellow-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                           </svg>
-                          <span className="font-bold text-yellow-800">You have unsaved changes</span>
+                          <span className="font-bold text-yellow-800 text-sm">You have unsaved changes</span>
                         </div>
                         <button
                           onClick={handleSaveSettings}
                           disabled={isSavingSettings}
-                          className="bg-green-600 hover:bg-green-700 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2.5 px-6 rounded-lg font-bold flex items-center gap-2 shadow-md transition-all"
+                          className="bg-green-600 hover:bg-green-700 disabled:opacity-70 disabled:cursor-not-allowed text-white py-2.5 px-6 rounded-lg font-bold flex items-center justify-center gap-2 shadow-md transition-all w-full sm:w-auto shrink-0 cursor-pointer"
                         >
                           {isSavingSettings ? (
                             <>
@@ -1609,8 +2513,73 @@ const App: React.FC = () => {
         <CustomerSpendingModal
           customer={selectedCustomerForModal}
           invoices={invoices}
+          settings={settings}
           onClose={() => setSelectedCustomerForModal(null)}
         />
+      )}
+
+      {/* Product Sales & Customer Buying Details Modal */}
+      {selectedProductForModal && (
+        <ProductAnalysisModal
+          product={selectedProductForModal}
+          invoices={invoices}
+          customers={customers}
+          settings={settings}
+          onClose={() => setSelectedProductForModal(null)}
+        />
+      )}
+
+      {/* Payment Tracker Modal */}
+      {paymentInvoice && (
+        <PaymentTrackerModal
+          invoice={paymentInvoice}
+          onClose={() => setPaymentInvoice(null)}
+          onAddPayment={handleAddPayment}
+          onDeletePayment={handleDeletePayment}
+        />
+      )}
+
+      {/* Concurrent Session Modal Popup */}
+      {hasConcurrentSession && (
+        <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-center p-6 space-y-4">
+            <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+              <ShieldCheck size={32} />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">Session Conflict Detected</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Your account is currently logged in and active on another device or tab:
+              </p>
+              <div className="my-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-left text-xs text-amber-900 font-medium">
+                <div><span className="font-bold">Active Device:</span> {otherSessionInfo.device || 'Mobile / Desktop'}</div>
+                {otherSessionInfo.time && <div><span className="font-bold">Login Time:</span> {new Date(otherSessionInfo.time).toLocaleString('en-IN')}</div>}
+              </div>
+              <p className="text-xs text-slate-600">
+                Only 1 active session is allowed at a time for safety and data consistency.
+              </p>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button
+                onClick={handleClaimSession}
+                disabled={isClaimingSession}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all"
+              >
+                {isClaimingSession ? (
+                  <><Loader2 size={16} className="animate-spin" /> Logging out other session...</>
+                ) : (
+                  <><LogOut size={16} /> Logout Everywhere Else & Use Here</>
+                )}
+              </button>
+              <button
+                onClick={handleLogout}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl font-bold text-xs transition-colors"
+              >
+                Logout From This Device
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

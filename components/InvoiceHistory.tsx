@@ -1,21 +1,52 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Invoice, BusinessSettings } from '../types';
-import { Search, Eye, X, Printer, Download, Edit, Trash2 } from 'lucide-react';
+import { Search, Calendar, Eye, X, Printer, Download, Upload, Edit, Trash2, Wallet, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
+import { PaymentStatusBadge } from './PaymentTrackerModal';
+import { InvoiceImportModal } from './InvoiceImportModal';
 
 interface InvoiceHistoryProps {
   invoices: Invoice[];
   settings: BusinessSettings;
   onDeleteInvoice?: (invoiceId: string) => void;
   onEditInvoice?: (invoice: Invoice) => void;
+  onManagePayments?: (invoice: Invoice) => void;
+  enablePaymentTracking?: boolean;
+  csvImportAllowed?: boolean;
+  onImportInvoices?: (invoices: Invoice[]) => Promise<void>;
 }
 
-export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settings, onDeleteInvoice, onEditInvoice }) => {
+const getPaymentStatus = (inv: Invoice): 'unpaid' | 'partial' | 'paid' => {
+  const payments = inv.payments || [];
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  if (paid <= 0) return 'unpaid';
+  if (paid >= inv.total - 0.01) return 'paid';
+  return 'partial';
+};
+
+export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
+  invoices,
+  settings,
+  onDeleteInvoice,
+  onEditInvoice,
+  onManagePayments,
+  enablePaymentTracking = true,
+  csvImportAllowed = false,
+  onImportInvoices
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [showDateFilter, setShowDateFilter] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showImportModal, setShowImportModal] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  const resetPage = useCallback(() => setCurrentPage(1), []);
 
   // Scale for modal view
   const [scale, setScale] = useState(1);
@@ -59,6 +90,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
   }, [viewingInvoice]);
 
   const filteredInvoices = useMemo(() => {
+    // Reset to page 1 whenever filter changes (side-effect via dependency)
     return invoices.filter(invoice => {
       const matchesSearch =
         invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -92,6 +124,17 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
       return parseInt(b.id) - parseInt(a.id);
     });
   }, [invoices, searchTerm, startDate, endDate]);
+
+  // Reset page when filters change
+  useEffect(() => { resetPage(); }, [searchTerm, startDate, endDate, resetPage]);
+
+  // Pagination calculations
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIdx = (safePage - 1) * pageSize;
+  const pagedInvoices = filteredInvoices.slice(startIdx, startIdx + pageSize);
+  const endIdx = Math.min(startIdx + pageSize, filteredInvoices.length);
+
 
   const handlePrint = () => {
     if (!viewingInvoice) return;
@@ -195,72 +238,105 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
     <div className="h-full flex flex-col overflow-hidden">
       <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <div className="p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-indigo-50 to-purple-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shrink-0">
-          <div className="flex-1">
-            <h2 className="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
-              <Search className="w-6 h-6 text-indigo-600" />
-              Invoice History
-            </h2>
-            <p className="text-xs text-slate-500 mt-1">View and manage all invoices</p>
+        <div className="p-3 sm:p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-indigo-50 to-purple-50 flex flex-row items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Search className="w-5 h-5 text-indigo-600 shrink-0" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h2 className="text-base sm:text-xl md:text-2xl font-bold text-slate-800 truncate">Invoice History</h2>
+                <span className="bg-indigo-100 text-indigo-700 text-xs font-black px-2 py-0.5 rounded-full border border-indigo-200 shrink-0">
+                  {filteredInvoices.length}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 hidden sm:block">View and manage all invoices</p>
+            </div>
           </div>
-          <div className="flex items-center gap-2 w-full md:w-auto">
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {csvImportAllowed && onImportInvoices && (
+              <button
+                onClick={() => setShowImportModal(true)}
+                className="flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm"
+                title="Import Invoices from CSV"
+              >
+                <Upload size={13} /> <span className="hidden sm:inline">Import CSV</span>
+              </button>
+            )}
             <button
               onClick={handleExportCSV}
               disabled={filteredInvoices.length === 0}
-              className="flex-1 md:flex-initial flex items-center justify-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              className="flex items-center justify-center gap-1 bg-green-600 hover:bg-green-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               title="Export to CSV"
             >
-              <Download size={14} /> <span>Export CSV</span>
+              <Download size={13} /> <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">CSV</span>
             </button>
-            <div className="bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-200">
-              <div className="text-lg md:text-2xl font-bold text-indigo-600">{filteredInvoices.length}</div>
-              <div className="text-[10px] text-slate-500 uppercase font-bold">Total</div>
-            </div>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="p-4 md:p-5 border-b border-slate-200 bg-slate-50 shrink-0">
-          <div className="flex flex-col gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-3 text-slate-400 w-4 h-4" />
+        {/* Compact Filters & Search Bar */}
+        <div className="p-2.5 sm:p-4 border-b border-slate-200 bg-slate-50 shrink-0 space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
               <input
                 type="text"
-                placeholder="Search by customer name or bill number..."
+                placeholder="Search customer name or bill #..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                className="w-full pl-9 pr-8 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
               />
+              {searchTerm && (
+                <button onClick={() => setSearchTerm('')} className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 p-0.5">
+                  <X size={14} />
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setShowDateFilter(!showDateFilter)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors shrink-0 ${
+                startDate || endDate || showDateFilter
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                  : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+              }`}
+              title="Filter by Date Range"
+            >
+              <Calendar size={13} />
+              <span>Dates</span>
+              {(startDate || endDate) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
+            </button>
+          </div>
+
+          {/* Date Range Controls (Expanded when active or toggled) */}
+          {(showDateFilter || startDate || endDate) && (
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">From Date</label>
+                <label className="block text-[10px] sm:text-xs font-bold text-slate-600 mb-0.5">From Date</label>
                 <input
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                  className="w-full px-2 py-1 border border-slate-300 rounded-md text-xs focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">To Date</label>
+                <label className="block text-[10px] sm:text-xs font-bold text-slate-600 mb-0.5">To Date</label>
                 <input
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                  className="w-full px-2 py-1 border border-slate-300 rounded-md text-xs focus:ring-2 focus:ring-indigo-500 outline-none bg-white font-medium"
                 />
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto">
           {/* MOBILE VIEW: Cards */}
           <div className="md:hidden p-3 space-y-3">
-            {filteredInvoices.map(inv => {
+            {pagedInvoices.map(inv => {
               const preview = inv.items.slice(0, 2).map(i => `${i.name} x ${i.quantity}`).join(', ');
               const moreCount = inv.items.length > 2 ? ` +${inv.items.length - 2} more` : '';
               return (
@@ -287,17 +363,32 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                     <div className="text-right">
                       <div className="text-xl font-bold text-indigo-600">₹{inv.total}</div>
                       <div className="text-xs text-slate-500">{inv.items.length} items</div>
+                      {enablePaymentTracking && (
+                        <div className="mt-1">
+                          <PaymentStatusBadge status={getPaymentStatus(inv)} small />
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="pt-3 border-t border-slate-100">
                     <p className="text-xs text-slate-500 truncate mb-2">{preview || 'No items'}{moreCount}</p>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className={`grid ${enablePaymentTracking && onManagePayments ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-2`}>
                       <button 
                         onClick={(e) => { e.stopPropagation(); setViewingInvoice(inv); }}
                         className="bg-indigo-50 text-indigo-600 py-2 px-2 rounded-lg hover:bg-indigo-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
                       >
                         <Eye size={14} /> View
                       </button>
+                      {enablePaymentTracking && onManagePayments && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onManagePayments(inv); }}
+                          className="bg-purple-50 text-purple-600 py-2 px-2 rounded-lg hover:bg-purple-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                        >
+                          <Wallet size={14} /> Payments
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
                       {onEditInvoice && (
                         <button 
                           onClick={(e) => { e.stopPropagation(); onEditInvoice(inv); }}
@@ -319,7 +410,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                 </div>
               );
             })}
-            {filteredInvoices.length === 0 && (
+            {pagedInvoices.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                 <Search size={48} className="mb-3 opacity-20" />
                 <p className="font-medium">No invoices found</p>
@@ -338,11 +429,12 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                   <th className="p-4 whitespace-nowrap">Customer</th>
                   <th className="p-4 whitespace-nowrap text-right">Items</th>
                   <th className="p-4 whitespace-nowrap text-right">Total Amount</th>
+                  {enablePaymentTracking && <th className="p-4 whitespace-nowrap text-center">Status</th>}
                   <th className="p-4 whitespace-nowrap text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {filteredInvoices.map(inv => (
+                {pagedInvoices.map(inv => (
                   <React.Fragment key={inv.id}>
                     <tr className="hover:bg-slate-50 transition-colors">
                       <td className="p-4 font-bold text-slate-700">#{inv.id}</td>
@@ -359,6 +451,11 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                         </div>
                       </td>
                       <td className="p-4 text-right font-bold text-slate-900">₹{inv.total}</td>
+                      {enablePaymentTracking && (
+                        <td className="p-4 text-center">
+                          <PaymentStatusBadge status={getPaymentStatus(inv)} />
+                        </td>
+                      )}
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <button
@@ -368,6 +465,15 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                           >
                             <Eye size={16} />
                           </button>
+                          {enablePaymentTracking && onManagePayments && (
+                            <button
+                              onClick={() => onManagePayments(inv)}
+                              className="bg-purple-100 hover:bg-purple-200 text-purple-700 p-2 rounded-full transition-colors"
+                              title="Manage Payments"
+                            >
+                              <Wallet size={16} />
+                            </button>
+                          )}
                           {onEditInvoice && (
                             <button
                               onClick={() => onEditInvoice(inv)}
@@ -399,7 +505,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
 
                     {expandedId === inv.id && (
                       <tr id={`inv-expanded-${inv.id}`} className="bg-slate-50">
-                        <td colSpan={6} className="p-4">
+                        <td colSpan={enablePaymentTracking ? 7 : 6} className="p-4">
                           <div className="grid gap-2">
                             {inv.items.map(it => (
                               <div key={it.id} className="flex justify-between text-sm text-slate-700">
@@ -413,9 +519,9 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                     )}
                   </React.Fragment>
                 ))}
-                {filteredInvoices.length === 0 && (
+                {pagedInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-400">
+                    <td colSpan={enablePaymentTracking ? 7 : 6} className="p-8 text-center text-slate-400">
                       No invoices found matching your criteria.
                     </td>
                   </tr>
@@ -424,6 +530,65 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
             </table>
           </div>
         </div>
+
+        {/* Pagination Controls */}
+        {filteredInvoices.length > 0 && (
+          <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Info + page size */}
+            <div className="flex items-center gap-3 text-xs text-slate-500">
+              <span>
+                Showing <span className="font-semibold text-slate-700">{startIdx + 1}–{endIdx}</span> of{' '}
+                <span className="font-semibold text-slate-700">{filteredInvoices.length}</span> invoices
+              </span>
+              <select
+                value={pageSize}
+                onChange={e => { setPageSize(Number(e.target.value)); resetPage(); }}
+                className="border border-slate-300 rounded px-2 py-1 text-xs bg-white focus:ring-1 focus:ring-indigo-400 outline-none"
+              >
+                {[10, 25, 50, 100].map(s => <option key={s} value={s}>{s} / page</option>)}
+              </select>
+            </div>
+
+            {/* Page navigation */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={safePage === 1}
+                className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="First page"
+              >
+                <ChevronsLeft size={16} />
+              </button>
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Previous page"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span className="px-3 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded">
+                {safePage} / {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage === totalPages}
+                className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Next page"
+              >
+                <ChevronRight size={16} />
+              </button>
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={safePage === totalPages}
+                className="p-1.5 rounded hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Last page"
+              >
+                <ChevronsRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Invoice View Modal */}
         {viewingInvoice && (
@@ -470,10 +635,16 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({ invoices, settin
                   />
                 </div>
               </div>
-
-
             </div>
           </div>
+        )}
+
+        {/* Invoice Import Modal */}
+        {showImportModal && onImportInvoices && (
+          <InvoiceImportModal
+            onClose={() => setShowImportModal(false)}
+            onImport={onImportInvoices}
+          />
         )}
       </div>
     </div>

@@ -6,6 +6,7 @@ import { Product, Customer, InvoiceItem, BusinessSettings, Invoice } from '../ty
 interface InvoiceGeneratorProps {
   products: Product[];
   customers: Customer[];
+  invoices?: Invoice[];
   settings: BusinessSettings;
   onUpdateSettings: (newSettings: BusinessSettings) => void;
   onSaveInvoice: (invoice: Invoice) => Promise<void>;
@@ -17,6 +18,7 @@ interface InvoiceGeneratorProps {
 export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   products,
   customers,
+  invoices = [],
   settings,
   onUpdateSettings,
   onSaveInvoice,
@@ -30,9 +32,108 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerCity, setCustomerCity] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionRef = useRef<HTMLDivElement>(null);
+
+  // Merge registered customers with unique customer names from past invoices
+  const allCustomerOptions = React.useMemo(() => {
+    const map = new Map<string, { id: string; name: string; city: string; isFromInvoice: boolean }>();
+
+    // 1. Saved database customers
+    customers.forEach(c => {
+      if (c.name.trim()) {
+        map.set(c.name.trim().toLowerCase(), {
+          id: c.id,
+          name: c.name.trim(),
+          city: c.city || '',
+          isFromInvoice: false
+        });
+      }
+    });
+
+    // 2. Customers from past invoices (not explicitly saved in database)
+    if (invoices && invoices.length > 0) {
+      invoices.forEach(inv => {
+        if (inv.customerName && inv.customerName.trim()) {
+          const key = inv.customerName.trim().toLowerCase();
+          if (!map.has(key)) {
+            map.set(key, {
+              id: `inv-${key}`,
+              name: inv.customerName.trim(),
+              city: inv.customerCity || '',
+              isFromInvoice: true
+            });
+          }
+        }
+      });
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [customers, invoices]);
+
+  // Close suggestions pop-up when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestionRef.current && !suggestionRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filtered customer suggestions while typing
+  const matchingSuggestions = React.useMemo(() => {
+    if (!customerName.trim()) return allCustomerOptions;
+    const query = customerName.trim().toLowerCase();
+    return allCustomerOptions.filter(c =>
+      c.name.toLowerCase().includes(query) || c.city.toLowerCase().includes(query)
+    );
+  }, [allCustomerOptions, customerName]);
+
+  // Merge registered products with unique products from past invoices
+  const allProductOptions = React.useMemo(() => {
+    const savedNames = new Set(products.map(p => p.name.trim().toLowerCase()));
+    const list: Array<{ id: string; name: string; rate: number; unit: string; packing?: string; isFromInvoice?: boolean }> = products.map(p => ({
+      id: p.id,
+      name: p.name,
+      rate: p.rate,
+      unit: p.unit,
+      packing: p.packing,
+      isFromInvoice: false
+    }));
+
+    if (invoices && invoices.length > 0) {
+      invoices.forEach(inv => {
+        if (inv.items && Array.isArray(inv.items)) {
+          inv.items.forEach(item => {
+            if (item.name && item.name.trim()) {
+              const normKey = item.name.trim().toLowerCase();
+              if (!savedNames.has(normKey)) {
+                savedNames.add(normKey);
+                list.push({
+                  id: `inv-prod-${normKey}`,
+                  name: item.name.trim(),
+                  rate: item.rate || 0,
+                  unit: item.unit || 'Kg',
+                  packing: item.packing || '',
+                  isFromInvoice: true
+                });
+              }
+            }
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [products, invoices]);
 
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [selectedProductID, setSelectedProductID] = useState<string>('');
+  const [customProductName, setCustomProductName] = useState('');
+  const [customPacking, setCustomPacking] = useState('');
+  const [customUnit, setCustomUnit] = useState<string>('');
   const [qty, setQty] = useState<number>(1);
   const [customRate, setCustomRate] = useState<string>(''); // Custom rate input
   const [showPreviewMobile, setShowPreviewMobile] = useState(false); // Mobile tab state
@@ -72,17 +173,27 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     }
   }, [items, customerName, customerCity, isSaved, onUnsavedChanges]);
 
-  // Auto-fill rate when product is selected
+  // Auto-fill product fields when selection changes
   useEffect(() => {
-    if (selectedProductID) {
-      const product = products.find(p => p.id === selectedProductID);
+    if (selectedProductID === 'CUSTOM') {
+      setCustomProductName('');
+      setCustomPacking('');
+      setCustomRate('');
+      setCustomUnit(settings.customUnits?.[0] || 'Kg');
+    } else if (selectedProductID) {
+      const product = allProductOptions.find(p => p.id === selectedProductID);
       if (product) {
-        setCustomRate(product.rate.toString());
+        setCustomProductName(product.name);
+        setCustomPacking(product.packing || '');
+        setCustomRate(product.rate > 0 ? product.rate.toString() : '');
+        setCustomUnit(product.unit || 'Kg');
       }
     } else {
+      setCustomProductName('');
+      setCustomPacking('');
       setCustomRate('');
     }
-  }, [selectedProductID, products]);
+  }, [selectedProductID, allProductOptions, settings.customUnits]);
 
   // Scaling logic for responsiveness
   const [scale, setScale] = useState(1);
@@ -127,19 +238,51 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const addItem = () => {
     if (!selectedProductID) return;
 
-    const product = products.find(p => p.id === selectedProductID);
+    if (selectedProductID === 'CUSTOM') {
+      if (!customProductName.trim()) {
+        alert("Please enter a product name for the custom product.");
+        return;
+      }
+      const finalRate = customRate && parseFloat(customRate) >= 0 ? parseFloat(customRate) : 0;
+      const finalQty = qty > 0 ? qty : 1;
+      const unitToUse = customUnit || settings.customUnits?.[0] || 'Kg';
+
+      const newItem: InvoiceItem = {
+        id: Date.now().toString(),
+        productId: `custom-${Date.now()}`,
+        name: customProductName.trim(),
+        quantity: finalQty,
+        unit: unitToUse,
+        rate: finalRate,
+        amount: finalQty * finalRate,
+        packing: customPacking.trim() || undefined
+      };
+
+      setItems([...items, newItem]);
+      setSelectedProductID('');
+      setCustomProductName('');
+      setCustomPacking('');
+      setCustomRate('');
+      setQty(1);
+      setIsSaved(false);
+      return;
+    }
+
+    const product = allProductOptions.find(p => p.id === selectedProductID);
     if (!product) return;
 
-    // Use custom rate if provided, otherwise use product's default rate
-    const finalRate = customRate && parseFloat(customRate) > 0 ? parseFloat(customRate) : product.rate;
+    const finalRate = customRate && parseFloat(customRate) >= 0 ? parseFloat(customRate) : product.rate;
+    const finalQty = qty > 0 ? qty : 1;
+    const unitToUse = customUnit || product.unit || settings.customUnits?.[0] || 'Kg';
+    const packingToUse = customPacking !== undefined ? customPacking : product.packing;
 
-    // Check if item with same productId and same rate already exists in current bill
-    const existingIndex = items.findIndex(item => item.productId === product.id && item.rate === finalRate);
+    // Check if item with same name and same rate already exists in current bill
+    const existingIndex = items.findIndex(item => item.name.trim().toLowerCase() === product.name.trim().toLowerCase() && item.rate === finalRate);
 
     if (existingIndex > -1) {
       const newItems = [...items];
       const existingItem = newItems[existingIndex];
-      const newQty = existingItem.quantity + qty;
+      const newQty = existingItem.quantity + finalQty;
       newItems[existingIndex] = {
         ...existingItem,
         quantity: newQty,
@@ -150,19 +293,21 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       const newItem: InvoiceItem = {
         id: Date.now().toString(),
         productId: product.id,
-        name: product.name,
-        quantity: qty,
-        unit: product.unit,
+        name: customProductName.trim() || product.name,
+        quantity: finalQty,
+        unit: unitToUse,
         rate: finalRate,
-        amount: qty * finalRate,
-        packing: product.packing
+        amount: finalQty * finalRate,
+        packing: packingToUse || undefined
       };
       setItems([...items, newItem]);
     }
 
     setSelectedProductID('');
-    setQty(1);
+    setCustomProductName('');
+    setCustomPacking('');
     setCustomRate('');
+    setQty(1);
     setIsSaved(false);
   };
 
@@ -203,11 +348,11 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       setCustomerName('');
       setCustomerCity('');
     } else {
-      const customer = customers.find(c => c.id === custId);
-      if (customer) {
-        setSelectedCustomer(customer);
-        setCustomerName(customer.name);
-        setCustomerCity(customer.city);
+      const match = allCustomerOptions.find(c => c.id === custId);
+      if (match) {
+        setCustomerName(match.name);
+        setCustomerCity(match.city);
+        setShowSuggestions(false);
       }
     }
   };
@@ -416,31 +561,78 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         </div>
 
         {/* Customer Selection */}
-        <div className="mb-6 bg-slate-50 p-3 rounded-lg border border-slate-200">
-          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Customer</label>
+        <div className="mb-6 bg-slate-50 p-3 rounded-lg border border-slate-200" ref={suggestionRef}>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Customer / M/s.</label>
           <select
             onChange={handleCustomerSelect}
             disabled={isSaved}
             className="w-full p-2 border border-slate-300 rounded mb-2 focus:outline-none focus:border-red-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-500"
-            defaultValue="new"
+            value="new"
           >
-            <option value="new">+ New Customer</option>
-            {customers.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
+            <option value="new">+ Select or Type Customer Name...</option>
+            {customers.length > 0 && (
+              <optgroup label="Saved Customers">
+                {customers.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} {c.city ? `(${c.city})` : ''}</option>
+                ))}
+              </optgroup>
+            )}
+            {allCustomerOptions.filter(c => c.isFromInvoice).length > 0 && (
+              <optgroup label="Past Invoice Customers">
+                {allCustomerOptions.filter(c => c.isFromInvoice).map(c => (
+                  <option key={c.id} value={c.id}>{c.name} {c.city ? `(${c.city})` : ''}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
 
-          <input
-            type="text"
-            placeholder="Customer Name"
-            value={customerName}
-            onChange={(e) => {
-              setCustomerName(e.target.value);
-              setIsSaved(false);
-            }}
-            disabled={isSaved}
-            className="w-full p-2 border border-slate-300 rounded mb-2 outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Customer Name"
+              value={customerName}
+              onFocus={() => setShowSuggestions(true)}
+              onChange={(e) => {
+                setCustomerName(e.target.value);
+                setShowSuggestions(true);
+                setIsSaved(false);
+              }}
+              disabled={isSaved}
+              className="w-full p-2 border border-slate-300 rounded mb-2 outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500 font-bold"
+            />
+
+            {/* Customer Suggestions Popup Menu */}
+            {showSuggestions && matchingSuggestions.length > 0 && !isSaved && (
+              <div className="absolute left-0 right-0 top-[38px] z-50 bg-white border border-slate-300 rounded-lg shadow-xl max-h-52 overflow-y-auto divide-y divide-slate-100">
+                <div className="p-1.5 bg-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">
+                  <span>Suggested Customers ({matchingSuggestions.length})</span>
+                  <span className="text-[9px] text-slate-400 font-normal">Click to auto-fill</span>
+                </div>
+                {matchingSuggestions.map(s => (
+                  <div
+                    key={s.id}
+                    onClick={() => {
+                      setCustomerName(s.name);
+                      setCustomerCity(s.city);
+                      setShowSuggestions(false);
+                    }}
+                    className="p-2.5 hover:bg-red-50 cursor-pointer flex items-center justify-between transition-colors"
+                  >
+                    <div>
+                      <span className="font-bold text-slate-800 text-sm">{s.name}</span>
+                      {s.city && <span className="text-xs text-slate-500 ml-2">({s.city})</span>}
+                    </div>
+                    {s.isFromInvoice ? (
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">Past Invoice</span>
+                    ) : (
+                      <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">Saved</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <input
             type="text"
             placeholder="City"
@@ -456,19 +648,74 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
         {/* Add Items */}
         <div className="mb-6">
-          <h3 className="text-xs font-bold text-slate-500 uppercase mb-2">Add Products</h3>
-          <div className="space-y-2 mb-2">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-bold text-slate-500 uppercase">Add Products</h3>
+            <button
+              type="button"
+              onClick={() => setSelectedProductID(selectedProductID === 'CUSTOM' ? '' : 'CUSTOM')}
+              disabled={isSaved}
+              className={`text-xs font-bold px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer ${
+                selectedProductID === 'CUSTOM'
+                  ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              {selectedProductID === 'CUSTOM' ? '← Catalog Select' : '➕ Custom Product'}
+            </button>
+          </div>
+
+          <div className="space-y-2.5 mb-2">
             <select
               value={selectedProductID}
               onChange={(e) => setSelectedProductID(e.target.value)}
               disabled={isSaved}
-              className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-500"
+              className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-500 font-medium"
             >
-              <option value="">Select Item...</option>
-              {products.map(p => (
-                <option key={p.id} value={p.id}>{p.name} {p.packing ? `(${p.packing})` : ''}</option>
-              ))}
+              <option value="">Select Item from Catalog...</option>
+              <option value="CUSTOM" className="font-bold text-red-600">➕ Add Custom / Unsaved Product...</option>
+              {products.length > 0 && (
+                <optgroup label="Saved Catalog Products">
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} {p.packing ? `(${p.packing})` : ''} - ₹{p.rate}/{p.unit}</option>
+                  ))}
+                </optgroup>
+              )}
+              {allProductOptions.filter(p => p.isFromInvoice).length > 0 && (
+                <optgroup label="Past Invoice Products (Unsaved)">
+                  {allProductOptions.filter(p => p.isFromInvoice).map(p => (
+                    <option key={p.id} value={p.id}>{p.name} {p.packing ? `(${p.packing})` : ''} - ₹{p.rate}/{p.unit} (Unsaved)</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
+
+            {selectedProductID === 'CUSTOM' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-red-50/60 p-3 rounded-lg border border-red-100 shadow-xs">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Product Name *</label>
+                  <input
+                    type="text"
+                    placeholder="Custom Product Name"
+                    value={customProductName}
+                    onChange={(e) => setCustomProductName(e.target.value)}
+                    disabled={isSaved}
+                    className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">Packing (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 1 kg, 500 gm, 250 ML"
+                    value={customPacking}
+                    onChange={(e) => setCustomPacking(e.target.value)}
+                    disabled={isSaved}
+                    className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white"
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2 items-start">
               <div className="flex-1">
                 <label className="text-xs text-slate-500 block mb-1">Rate (₹)</label>
@@ -483,24 +730,49 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                   className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500"
                 />
               </div>
+
+              <div className="w-24">
+                <label className="text-xs text-slate-500 block mb-1">Unit</label>
+                {(() => {
+                  const unitList = (settings.customUnits && settings.customUnits.length > 0)
+                    ? settings.customUnits
+                    : ['Kg', 'Gm', 'Pkt', 'Qty', 'Ltr', 'Pcs', 'Meter', 'Box', 'Dozen', 'Ft', 'Sq Ft'];
+                  const options = Array.from(new Set([...unitList, customUnit].filter(Boolean)));
+                  return (
+                    <select
+                      value={customUnit || unitList[0]}
+                      onChange={(e) => setCustomUnit(e.target.value)}
+                      disabled={isSaved || !selectedProductID}
+                      className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-500"
+                    >
+                      {options.map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  );
+                })()}
+              </div>
+
               <div className="w-20">
                 <label className="text-xs text-slate-500 block mb-1">Qty</label>
                 <input
                   type="number"
                   value={qty}
                   onChange={(e) => setQty(Number(e.target.value))}
-                  disabled={isSaved}
+                  disabled={isSaved || !selectedProductID}
                   min="1"
                   step="1"
                   className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm text-center disabled:bg-slate-50 disabled:text-slate-500"
                 />
               </div>
+
               <div className="pt-5">
                 <button
+                  type="button"
                   onClick={addItem}
-                  disabled={isSaved || !selectedProductID}
-                  className="bg-red-600 text-white p-2 rounded hover:bg-red-700 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Add Item"
+                  disabled={isSaved || !selectedProductID || (selectedProductID === 'CUSTOM' && !customProductName.trim())}
+                  className="bg-red-600 text-white p-2 rounded hover:bg-red-700 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+                  title="Add Item to Bill"
                 >
                   <Plus className="w-5 h-5" />
                 </button>

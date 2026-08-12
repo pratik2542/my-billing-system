@@ -126,7 +126,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   // Ensure we have enough empty rows
   // When GST is enabled, we have 3 extra footer rows (Subtotal, CGST, SGST), so fewer empty rows needed
   // When GST is disabled, add more empty rows to fill the space
-  const minRows = isGstEnabled ? 8 : 10;
+  const minRows = isGstEnabled ? 5 : 7;
   const emptyRows = Math.max(0, minRows - items.length);
 
   const themeColor = settings.themeColor || '#dc2626';
@@ -134,36 +134,42 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const borderColor = themeColor;
   const lightBorder = hexToRgba(themeColor, 0.3);
 
-  const logoWidth = settings.logoWidth || 80;
+  // Column headers customization
+  const colHeaders = settings.columnHeaders || {};
+  const snHeader = colHeaders.snHeader || 'No.';
+  const particularsHeader = colHeaders.particularsHeader || 'Details';
+  const packingHeader = colHeaders.packingHeader || 'Packing';
+  const qtyHeader = colHeaders.qtyHeader || 'Qty';
+  const rateHeader = colHeaders.rateHeader || 'Rate';
+  const amountHeader = colHeaders.amountHeader || 'Amount';
+  const mergePackingAndQty = !!colHeaders.mergePackingAndQty;
+  const mergedPackingQtyHeader = colHeaders.mergedPackingQtyHeader || 'Packing / Qty';
 
   return (
-    <div id={id} className="bg-white w-[210mm] min-h-[297mm] print:min-h-0 print:h-auto mx-auto relative font-serif-custom flex flex-col" style={{ color: themeColor }}>
-      <div className="p-4 flex-1 flex flex-col">
-        {/* Outer Border */}
-        <div className="border-2 flex-1 flex flex-col" style={{ borderColor: borderColor }}>
+    <div id={id || "invoice-template"} className="bg-white text-slate-900 font-sans p-6 w-[794px] min-h-[1123px] mx-auto flex flex-col justify-between text-sm leading-relaxed border shadow-sm">
+      <div className="h-full flex flex-col">
+        {/* Border Box */}
+        <div className="border-2 flex flex-col min-h-[1050px] justify-between flex-1" style={{ borderColor: borderColor }}>
 
           {/* Header Section */}
-          <div className="border-b-2 p-4 text-center relative" style={{ borderColor: borderColor }}>
-            {/* Logo */}
+          <div className="border-b-2 p-4 font-serif-custom text-center relative" style={{ color: themeColor, borderColor: borderColor }}>
             {settings.logoUrl ? (
               <img
                 src={settings.logoUrl}
                 alt="Logo"
                 className="absolute left-4 top-4 object-contain"
-                style={{ width: `${logoWidth}px`, maxHeight: '120px' }}
+                style={{ width: `${settings.logoWidth || 80}px`, maxHeight: '120px' }}
               />
             ) : (
               <div
-                className="absolute left-4 top-4 w-16 h-16 border-2 rounded-full flex items-center justify-center"
-                style={{ borderColor: borderColor }}>
-                <div className="text-center">
-                  <span className="block text-2xl font-bold leading-none">{settings.logoInitial}</span>
-                </div>
+                className="w-16 h-16 rounded-full border-2 flex items-center justify-center font-bold text-3xl absolute left-4 top-4 shadow-sm"
+                style={{ borderColor: themeColor, color: themeColor }}
+              >
+                {settings.logoInitial}
               </div>
             )}
-
             <div className="mt-2">
-              <h1 className="text-5xl font-bold tracking-wider mb-1" style={{ color: themeColor }}>{settings.name}</h1>
+              <h1 className="text-5xl font-bold mb-1" style={{ color: themeColor, letterSpacing: settings.nameLetterSpacing || '0.05em' }}>{settings.name}</h1>
               <h2 className="text-2xl font-bold" style={{ color: themeColor }}>{settings.subName}</h2>
               <p className="mt-1 text-sm" style={{ color: themeColor }}>{settings.address} M.: {settings.mobile}</p>
               {settings.enableGst && settings.gstin && (
@@ -196,12 +202,18 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
 
           {/* Table Header */}
           <div className="flex border-b-2" style={{ borderColor: borderColor, backgroundColor: lightBg }}>
-            <div className="w-10 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>No.</div>
-            <div className="flex-1 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>Details</div>
-            <div className="w-24 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>Packing</div>
-            <div className="w-16 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>Qty</div>
-            <div className="w-20 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>Rate</div>
-            <div className="w-24 p-1 text-center font-bold">Amount</div>
+            <div className="w-10 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>{snHeader}</div>
+            <div className="flex-1 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>{particularsHeader}</div>
+            {mergePackingAndQty ? (
+              <div className="w-40 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>{mergedPackingQtyHeader}</div>
+            ) : (
+              <>
+                <div className="w-24 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>{packingHeader}</div>
+                <div className="w-16 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>{qtyHeader}</div>
+              </>
+            )}
+            <div className="w-20 p-1 text-center font-bold border-r" style={{ borderColor: borderColor }}>{rateHeader}</div>
+            <div className="w-24 p-1 text-center font-bold">{amountHeader}</div>
           </div>
 
           {/* Table Body */}
@@ -214,12 +226,20 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                 <div className="flex-1 p-1 pl-3 text-left border-r text-lg text-slate-800 font-medium" style={{ borderColor: borderColor }}>
                   {item.name}
                 </div>
-                <div className="w-24 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
-                  {item.packing || '-'}
-                </div>
-                <div className="w-16 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
-                  {item.quantity} {item.unit}
-                </div>
+                {mergePackingAndQty ? (
+                  <div className="w-40 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
+                    {item.packing ? `${item.packing} (${item.quantity} ${item.unit})` : `${item.quantity} ${item.unit}`}
+                  </div>
+                ) : (
+                  <>
+                    <div className="w-24 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
+                      {item.packing || '-'}
+                    </div>
+                    <div className="w-16 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
+                      {item.quantity} {item.unit}
+                    </div>
+                  </>
+                )}
                 <div className="w-20 p-1 text-center border-r text-lg font-handwriting text-slate-900 flex items-center justify-center" style={{ borderColor: borderColor }}>
                   {item.rate}
                 </div>
@@ -235,8 +255,14 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                 <div key={`empty-${i}`} className="flex border-b flex-1 min-h-[40px]" style={{ borderColor: hexToRgba(themeColor, 0.1) }}>
                   <div className="w-10 border-r" style={{ borderColor: borderColor }}></div>
                   <div className="flex-1 border-r" style={{ borderColor: borderColor }}></div>
-                  <div className="w-24 border-r" style={{ borderColor: borderColor }}></div>
-                  <div className="w-16 border-r" style={{ borderColor: borderColor }}></div>
+                  {mergePackingAndQty ? (
+                    <div className="w-40 border-r" style={{ borderColor: borderColor }}></div>
+                  ) : (
+                    <>
+                      <div className="w-24 border-r" style={{ borderColor: borderColor }}></div>
+                      <div className="w-16 border-r" style={{ borderColor: borderColor }}></div>
+                    </>
+                  )}
                   <div className="w-20 border-r" style={{ borderColor: borderColor }}></div>
                   <div className="w-24"></div>
                 </div>
@@ -324,15 +350,15 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                     {settings.bankName && (
                       <div className="p-2 text-sm">
                         <h3 className="font-bold underline mb-1">Company's Bank Details</h3>
-                        <div className="grid grid-cols-[80px_1fr] gap-x-2">
+                        <div className="grid grid-cols-[105px_1fr] gap-x-2">
                           <span className="font-semibold">Bank Name:</span>
                           <span className="text-slate-900 font-medium">{settings.bankName}</span>
 
                           <span className="font-semibold">A/c No.:</span>
                           <span className="text-slate-900 font-medium">{settings.bankAccountNumber}</span>
 
-                          <span className="font-semibold">Branch & IFS:</span>
-                          <span className="text-slate-900 font-medium">{settings.bankBranch} {settings.bankIfsc}</span>
+                          <span className="font-semibold">Branch & IFSC:</span>
+                          <span className="text-slate-900 font-medium">{settings.bankBranch ? `${settings.bankBranch} ${settings.bankIfsc || ''}`.trim() : (settings.bankIfsc || '')}</span>
                         </div>
                       </div>
                     )}
@@ -347,12 +373,13 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                         />
                         {/* UPI Logo Overlay */}
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="bg-white p-0.5 rounded-sm shadow-sm border border-slate-100">
-                            <img
-                              src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/UPI-Logo-vector.svg/64px-UPI-Logo-vector.svg.png"
-                              className="w-5 h-5 object-contain"
-                              alt="UPI Logo"
-                            />
+                          <div className="bg-white px-1 py-0.5 rounded shadow-sm border border-slate-200 flex items-center justify-center gap-0.5">
+                            <svg className="w-4 h-3" viewBox="0 0 50 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M5 5L20 25L26 16L15 5H5Z" fill="#78258D" />
+                              <path d="M22 5L12 20L17 25L32 5H22Z" fill="#008344" />
+                              <path d="M30 25H38L45 5H37L30 25Z" fill="#008344" />
+                            </svg>
+                            <span className="text-[9px] font-black tracking-tighter text-slate-800 leading-none">UPI</span>
                           </div>
                         </div>
                       </div>
@@ -378,26 +405,26 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             </div>
 
             {/* Signatures */}
-            <div className="flex justify-between items-end p-3 pt-6 border-t-2" style={{ borderColor: borderColor }}>
-              <div className="text-center w-1/3">
-                <div className="text-xs text-left mb-4 italic text-slate-500">
-                  Declaration:<br />
+            <div className="flex justify-between items-end p-2.5 border-t-2 bg-white" style={{ borderColor: borderColor }}>
+              <div className="text-center w-5/12">
+                <div className="text-[10px] text-left leading-snug italic text-slate-500">
+                  <span className="font-bold not-italic text-slate-700">Declaration:</span><br />
                   We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
                 </div>
               </div>
-              <div className="text-center w-1/3">
-                <p className="font-bold mb-1 text-sm">For, {settings.signatureName || settings.name}</p>
+              <div className="text-center w-4/12">
+                <p className="font-bold mb-1 text-xs">For, {settings.signatureName || settings.name}</p>
                 {settings.signatureUrl && (
-                  <div className="flex justify-center my-2">
+                  <div className="flex justify-center my-1">
                     <img
                       src={settings.signatureUrl}
                       alt="Signature"
-                      className="max-h-12 object-contain"
+                      className="max-h-10 object-contain filter contrast-[180%] brightness-[80%]"
                     />
                   </div>
                 )}
-                <div className="border-t w-full mb-1" style={{ borderColor: lightBorder }}></div>
-                <span className="text-xs">Authorised Signatory</span>
+                <div className="border-t w-full my-1" style={{ borderColor: lightBorder }}></div>
+                <span className="text-xs font-semibold text-slate-700">Authorised Signatory</span>
               </div>
             </div>
           </div>
