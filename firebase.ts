@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 
 // Firebase project configuration
 export const firebaseConfig = {
@@ -15,6 +16,28 @@ export const firebaseConfig = {
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
+
+// --- Firebase App Check with reCAPTCHA Enterprise ---
+// On localhost, enable debug mode so local dev doesn't need a real reCAPTCHA challenge.
+// IMPORTANT: The debug token printed in the browser console must be registered in:
+//   Firebase Console > App Check > Apps > ⋮ > Manage debug tokens
+if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+  // @ts-ignore — self.FIREBASE_APPCHECK_DEBUG_TOKEN enables debug mode on localhost
+  self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+}
+
+const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
+if (recaptchaSiteKey) {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+      isTokenAutoRefreshEnabled: true
+    });
+    console.log('App Check initialized with reCAPTCHA Enterprise');
+  } catch (e) {
+    console.warn('App Check initialization failed:', e);
+  }
+}
 
 // Initialize Firestore with IndexedDB Persistent Local Cache & Multi-Tab Sync.
 // This prevents expensive server read overloads on back-to-back page refreshes.

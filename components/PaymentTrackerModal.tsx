@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { Invoice, PaymentEntry, PaymentMode } from '../types';
 import { X, PlusCircle, Trash2, IndianRupee, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 
@@ -81,10 +81,13 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
         note: note.trim(),
       };
       await onAddPayment(invoice.id, entry);
-      setAmount('');
-      setNote('');
-    } catch {
-      setFormError('Failed to save payment. Please try again.');
+    } catch (e: any) {
+      console.error('Failed to save payment:', e);
+      if (e?.code === 'permission-denied' || (e?.message && e.message.includes('permissions'))) {
+        setFormError('Permission Error: Firebase Security Rules are blocking writes. Please publish the updated Security Rules in Firebase Console.');
+      } else {
+        setFormError(e?.message || 'Failed to save payment. Please try again.');
+      }
     } finally {
       setSaving(false);
     }

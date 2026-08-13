@@ -19,7 +19,12 @@ import {
   Loader2,
   ShieldCheck,
   AlertTriangle,
-  Table
+  Table,
+  Search,
+  User as UserIcon,
+  MapPin,
+  Phone,
+  PhoneCall
 } from 'lucide-react';
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { InvoiceHistory } from './components/InvoiceHistory';
@@ -57,7 +62,7 @@ import {
   limit,
   increment
 } from 'firebase/firestore';
-import { signInWithEmailAndPassword, onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut, type User } from 'firebase/auth';
 
 const isMainAdminUser = (u: User | null) => {
   if (!u || !u.email) return false;
@@ -144,7 +149,20 @@ const App: React.FC = () => {
     phone: ''
   });
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [showCustomerFormMobile, setShowCustomerFormMobile] = useState(false);
   const customerFormRef = useRef<HTMLDivElement>(null);
+
+  // Filtered customer list based on search query
+  const filteredCustomers = React.useMemo(() => {
+    if (!customerSearchQuery.trim()) return customers;
+    const q = customerSearchQuery.toLowerCase().trim();
+    return customers.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      (c.city && c.city.toLowerCase().includes(q)) ||
+      (c.phone && c.phone.includes(q))
+    );
+  }, [customers, customerSearchQuery]);
 
 
 
@@ -213,6 +231,10 @@ const App: React.FC = () => {
         // Non-blocking profile tracking & block status check
         (async () => {
           try {
+            // Debug: log auth token status to diagnose permission issues
+            const token = await currentUser.getIdTokenResult();
+            console.log('Auth token valid, uid:', currentUser.uid, 'expires:', token.expirationTime);
+
             const profileRef = doc(db, 'userProfiles', currentUser.uid);
             const profileSnap = await getDoc(profileRef);
 
@@ -274,7 +296,8 @@ const App: React.FC = () => {
               if (isLegacy && (!data.businessId || data.businessId !== 'global')) {
                 updates.businessId = 'global';
               }
-              await updateDoc(profileRef, updates);
+              // Use setDoc merge instead of updateDoc — more resilient to edge cases
+              await setDoc(profileRef, updates, { merge: true });
             }
 
             setDoc(doc(db, 'userProfiles', currentUser.uid, 'sessions', sessionId), {
@@ -304,6 +327,10 @@ const App: React.FC = () => {
         const profileData = docSnap.data() as UserProfile;
         setUserProfile(profileData);
 
+        // If the snapshot came from local cache (not confirmed by server),
+        // skip session enforcement — the cached activeSessions list may be stale.
+        const fromCache = docSnap.metadata.fromCache;
+
         const currentSid = getOrInitSessionId();
         const maxAllowed = profileData.maxAllowedSessions || 1;
         const activeList = profileData.activeSessions || [];
@@ -313,6 +340,9 @@ const App: React.FC = () => {
         
         if (isSessionRegistered) {
           wasRegisteredRef.current = true;
+          setHasConcurrentSession(false);
+        } else if (fromCache) {
+          // Don't enforce session conflict from stale cached data — let the server confirm first
           setHasConcurrentSession(false);
         } else {
           // If this session was previously registered and active, but was evicted/removed:
@@ -341,7 +371,7 @@ const App: React.FC = () => {
             const deviceStr = `${device} (${browser})`;
             const now = Date.now();
             const updatedList = [...activeList, { id: currentSid, device: deviceStr, lastActive: now }];
-            updateDoc(doc(db, 'userProfiles', user.uid), { activeSessions: updatedList }).catch(() => {});
+            setDoc(doc(db, 'userProfiles', user.uid), { activeSessions: updatedList }, { merge: true }).catch(() => {});
             wasRegisteredRef.current = true;
             setHasConcurrentSession(false);
           }
@@ -349,6 +379,8 @@ const App: React.FC = () => {
       }
     }, (err) => {
       console.warn('UserProfile snapshot listener error:', err.message);
+      // If we can't reach Firestore (permissions / network), don't trap user in conflict screen
+      setHasConcurrentSession(false);
     });
     return () => unsubProfile();
   }, [user]);
@@ -439,17 +471,22 @@ const App: React.FC = () => {
       const deviceStr = `${device} (${browser})`;
       const now = Date.now();
 
-      // Revoke all other active sessions and set only this current session
-      await updateDoc(doc(db, 'userProfiles', user.uid), {
+      // Revoke all other active sessions and set only this current session using setDoc merge
+      await setDoc(doc(db, 'userProfiles', user.uid), {
         activeSessions: [{ id: currentSid, device: deviceStr, lastActive: now }],
         activeSessionId: currentSid,
         activeSessionDevice: deviceStr,
         lastLogin: now,
         lastSeen: now
-      });
+      }, { merge: true });
+
+      wasRegisteredRef.current = true;
       setHasConcurrentSession(false);
     } catch (e) {
-      console.error('Failed to claim session:', e);
+      console.warn('Could not update remote session in Firestore, unlocking local session:', e);
+      // Fallback: Clear local conflict state so user is never trapped in a lock loop on localhost
+      wasRegisteredRef.current = true;
+      setHasConcurrentSession(false);
     } finally {
       setIsClaimingSession(false);
     }
@@ -578,6 +615,24 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
+    // Remove this session from the activeSessions list in Firestore before signing out.
+    // Without this, the old session entry stays in the DB and causes a false
+    // "Session Conflict Detected" on the very next login.
+    if (user) {
+      try {
+        const currentSid = getOrInitSessionId();
+        const profileRef = doc(db, 'userProfiles', user.uid);
+        const profileSnap = await getDoc(profileRef);
+        if (profileSnap.exists()) {
+          const data = profileSnap.data();
+          const cleanedSessions = (data.activeSessions || []).filter((s: any) => s.id !== currentSid);
+          await setDoc(profileRef, { activeSessions: cleanedSessions }, { merge: true });
+        }
+      } catch {
+        // Non-fatal — proceed with sign-out regardless
+      }
+    }
+    wasRegisteredRef.current = false;
     await signOut(auth);
     setEmail('');
     setPassword('');
@@ -602,33 +657,57 @@ const App: React.FC = () => {
   const getCustomersCol = () => isUseGlobal() ? collection(db, 'customers') : collection(db, 'users', getWorkspaceId(), 'customers');
   const getInvoicesCol = () => isUseGlobal() ? collection(db, 'invoices') : collection(db, 'users', getWorkspaceId(), 'invoices');
 
+  // Helper: strip undefined values from objects before Firestore writes.
+  // Firestore throws "Unsupported field value: undefined" if any field is undefined.
+  const sanitizeForFirestore = (obj: any): any => {
+    if (obj === null || obj === undefined) return null;
+    if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
+    if (typeof obj === 'object' && !(obj instanceof Date)) {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined) {
+          cleaned[key] = sanitizeForFirestore(value);
+        }
+      }
+      return cleaned;
+    }
+    return obj;
+  };
+
   const handleImportInvoices = async (importedInvoices: Invoice[]) => {
     if (!user) return;
     const invCol = getInvoicesCol();
     for (const inv of importedInvoices) {
-      await setDoc(doc(invCol, inv.id), inv);
+      await setDoc(doc(invCol, inv.id), sanitizeForFirestore(inv));
     }
     updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(importedInvoices.length) }).catch(() => {});
     logUserActivity('invoice', 'Import Invoices', `Imported ${importedInvoices.length} invoices`);
   };
 
   const handleSaveInvoice = async (invoice: Invoice) => {
-    if (!user) return;
+    if (!user) {
+      alert("You must be logged in to save invoices.");
+      return;
+    }
     try {
       const isEditing = editingInvoice && editingInvoice.id === invoice.id;
       const invCol = getInvoicesCol();
       const settingsRef = getSettingsRef();
-      
+      const cleanInvoice = sanitizeForFirestore(invoice);
+
       if (isEditing) {
-        await setDoc(doc(invCol, invoice.id), invoice);
+        await setDoc(doc(invCol, invoice.id), cleanInvoice);
         logUserActivity('invoice', 'Edit Invoice', `Updated Bill #${invoice.id} (₹${invoice.total})`);
       } else {
         const nextNo = (settings.nextInvoiceNumber || 0) + 1;
-        
-        await Promise.all([
-          setDoc(doc(invCol, invoice.id), invoice),
-          updateDoc(settingsRef, { nextInvoiceNumber: nextNo })
-        ]);
+
+        // Save the invoice document first
+        await setDoc(doc(invCol, invoice.id), cleanInvoice);
+
+        // Update settings counter & user profile count independently (non-blocking if permission restricted)
+        updateDoc(settingsRef, { nextInvoiceNumber: nextNo }).catch(err => {
+          console.warn("Could not update nextInvoiceNumber in settings document:", err);
+        });
 
         updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(1) }).catch(() => {});
         logUserActivity('invoice', 'Create Invoice', `Generated Bill #${invoice.id} (₹${invoice.total}) for ${invoice.customerName}`);
@@ -636,9 +715,13 @@ const App: React.FC = () => {
         // Update local state optimistically
         setSettings(prev => ({ ...prev, nextInvoiceNumber: nextNo }));
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error saving invoice: ", e);
-      alert("Failed to save invoice to database.");
+      if (e?.code === 'permission-denied' || (e?.message && e.message.includes('permissions'))) {
+        alert("Permission Error: Your Firebase Security Rules are blocking writes to Firestore. Please update your Security Rules in the Firebase Console.");
+      } else {
+        alert("Failed to save invoice: " + (e?.message || "Unknown error"));
+      }
       throw e;
     }
   };
@@ -1557,154 +1640,306 @@ const compressImageToMaxDataUrl = (
 
         {activeTab === AppTab.CUSTOMERS && (
           <div className="h-full flex flex-col overflow-hidden">
-            <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
-              {/* Header */}
-              <div className="p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-indigo-50 flex justify-between items-center shrink-0">
+            <div className="max-w-6xl mx-auto w-full bg-white md:rounded-2xl shadow-sm border-0 md:border border-slate-200/80 flex flex-col h-full overflow-hidden">
+              {/* Responsive Compact Header */}
+              <div className="px-3.5 py-2.5 sm:px-5 sm:py-3 border-b border-slate-200 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white flex justify-between items-center shrink-0 shadow-sm">
                 <div>
-                  <h2 className="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
-                    <Users className="w-6 h-6 text-blue-600" />
+                  <h2 className="text-base sm:text-xl font-bold flex items-center gap-2 tracking-tight">
+                    <Users className="w-5 h-5 text-blue-200" />
                     Customers
+                    <span className="bg-white/20 backdrop-blur-xs text-white text-xs font-extrabold px-2 py-0.5 rounded-full ml-1 border border-white/20">
+                      {customers.length}
+                    </span>
                   </h2>
-                  <p className="text-xs text-slate-500 mt-1">Manage your customer database</p>
+                  <p className="text-[11px] text-blue-100/80 mt-0.5 font-medium hidden sm:block">Manage your customer database & insights</p>
                 </div>
-                <div className="bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-200">
-                  <div className="text-2xl font-bold text-blue-600">{customers.length}</div>
-                  <div className="text-[10px] text-slate-500 uppercase font-bold">Customers</div>
-                </div>
+
+                {/* Mobile Toggle Button for Add Form */}
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerFormMobile(prev => !prev)}
+                  className="md:hidden bg-white/20 hover:bg-white/30 border border-white/30 text-white font-semibold text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs active:scale-95 cursor-pointer"
+                >
+                  <UserPlus size={14} />
+                  <span>{showCustomerFormMobile || editingCustomerId ? 'Close Form' : '+ Add Customer'}</span>
+                </button>
               </div>
 
-              <div ref={customerFormRef} className="p-4 md:p-5 border-b border-slate-200 bg-slate-50 shrink-0">
-                <form onSubmit={handleCustomerSubmit} className="space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <input
-                      name="name"
-                      required
-                      placeholder="Customer Name *"
-                      value={custForm.name}
-                      onChange={e => setCustForm({ ...custForm, name: e.target.value })}
-                      className="w-full p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    />
-                    <input
-                      name="city"
-                      placeholder="City"
-                      value={custForm.city}
-                      onChange={e => setCustForm({ ...custForm, city: e.target.value })}
-                      className="w-full p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      name="phone"
-                      placeholder="Phone Number"
-                      value={custForm.phone}
-                      onChange={e => setCustForm({ ...custForm, phone: e.target.value })}
-                      className="flex-1 p-3 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    />
+              {/* Form Section - Single Row on Desktop, Compact/Collapsible on Mobile */}
+              <div
+                ref={customerFormRef}
+                className={`${
+                  showCustomerFormMobile || editingCustomerId ? 'block' : 'hidden md:block'
+                } p-3 sm:p-4 border-b border-slate-200 bg-slate-50/90 shrink-0 transition-all`}
+              >
+                <form onSubmit={handleCustomerSubmit} className="space-y-2.5 md:space-y-0">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-2.5 items-center">
+                    {/* Customer Name */}
+                    <div className="relative">
+                      <UserIcon className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={15} />
+                      <input
+                        name="name"
+                        required
+                        placeholder="Customer Name *"
+                        value={custForm.name}
+                        onChange={e => setCustForm({ ...custForm, name: e.target.value })}
+                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white outline-none transition-all placeholder:text-slate-400"
+                      />
+                    </div>
 
-                    {editingCustomerId ? (
-                      <>
-                        <button type="submit" className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-medium text-sm transition-colors shadow-sm" title="Update Customer">
-                          <Save size={18} /> <span className="hidden sm:inline">Update</span>
+                    {/* City */}
+                    <div className="relative">
+                      <MapPin className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={15} />
+                      <input
+                        name="city"
+                        placeholder="City"
+                        value={custForm.city}
+                        onChange={e => setCustForm({ ...custForm, city: e.target.value })}
+                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white outline-none transition-all placeholder:text-slate-400"
+                      />
+                    </div>
+
+                    {/* Phone Number */}
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={15} />
+                      <input
+                        name="phone"
+                        placeholder="Phone Number"
+                        value={custForm.phone}
+                        onChange={e => setCustForm({ ...custForm, phone: e.target.value })}
+                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white outline-none transition-all placeholder:text-slate-400"
+                      />
+                    </div>
+
+                    {/* Form Action Buttons */}
+                    <div className="flex items-center gap-1.5">
+                      {editingCustomerId ? (
+                        <>
+                          <button
+                            type="submit"
+                            className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-1.5 sm:py-2 px-3 rounded-lg text-xs sm:text-sm transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                            title="Update Customer"
+                          >
+                            <Save size={15} />
+                            <span>Update</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditCustomer}
+                            className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-1.5 sm:py-2 px-2.5 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                            title="Cancel Edit"
+                          >
+                            <X size={15} />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="submit"
+                          className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-1.5 sm:py-2 px-4 rounded-lg text-xs sm:text-sm transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          title="Add Customer"
+                        >
+                          <UserPlus size={15} />
+                          <span>Add Customer</span>
                         </button>
-                        <button type="button" onClick={cancelEditCustomer} className="bg-slate-400 text-white px-4 py-3 rounded-lg hover:bg-slate-500 flex items-center justify-center transition-colors" title="Cancel Edit">
-                          <X size={18} />
-                        </button>
-                      </>
-                    ) : (
-                      <button type="submit" className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-medium text-sm transition-colors shadow-sm" title="Add Customer">
-                        <PlusCircle size={18} /> <span className="hidden sm:inline">Add</span>
-                      </button>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </form>
               </div>
 
-              {/* Customers & Unsaved Customers Scrollable Area */}
-              <div className="flex-1 overflow-y-auto">
+              {/* Search & Quick Filter Bar */}
+              <div className="p-2.5 sm:p-3 bg-white border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={15} />
+                  <input
+                    type="text"
+                    placeholder="Search by name, city, or phone..."
+                    value={customerSearchQuery}
+                    onChange={e => setCustomerSearchQuery(e.target.value)}
+                    className="w-full pl-8 pr-7 py-1.5 border border-slate-200 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50 outline-none transition-all placeholder:text-slate-400"
+                  />
+                  {customerSearchQuery && (
+                    <button
+                      onClick={() => setCustomerSearchQuery('')}
+                      className="absolute right-2 top-2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
+                      title="Clear search"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                {customerSearchQuery && (
+                  <div className="text-[11px] text-slate-500 font-medium whitespace-nowrap px-1">
+                    <span className="font-bold text-slate-700">{filteredCustomers.length}</span>/{customers.length}
+                  </div>
+                )}
+              </div>
+
+              {/* Customers Scrollable Area */}
+              <div className="flex-1 overflow-y-auto bg-slate-50/30">
 
                 {/* Mobile Card View */}
-                <div className="md:hidden p-3 space-y-3">
-                  {customers.map(c => (
-                    <div key={c.id} className={`bg-white border-2 rounded-lg p-4 shadow-sm transition-all ${editingCustomerId === c.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-300'}`}>
-                      <div className="mb-3">
-                        <h3 className="font-bold text-slate-900 text-lg mb-1">{c.name}</h3>
-                        <div className="flex items-center gap-2 text-sm text-slate-600">
-                          <span className="inline-flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            {c.city}
-                          </span>
-                          {c.phone && (
-                            <span className="inline-flex items-center gap-1">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                              </svg>
-                              {c.phone}
-                            </span>
-                          )}
+                <div className="md:hidden p-3.5 space-y-3">
+                  {filteredCustomers.map(c => {
+                    const initials = c.name
+                      ? c.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
+                      : 'C';
+
+                    return (
+                      <div
+                        key={c.id}
+                        className={`bg-white border rounded-2xl p-4 shadow-xs transition-all ${
+                          editingCustomerId === c.id
+                            ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/30'
+                            : 'border-slate-200/90 hover:border-blue-300 hover:shadow-md'
+                        }`}
+                      >
+                        {/* Header Row: Initials Avatar + Info */}
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-bold text-sm flex items-center justify-center shadow-sm shrink-0">
+                            {initials}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-bold text-slate-900 text-base leading-snug truncate">
+                              {c.name}
+                            </h3>
+
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              {c.city && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium border border-slate-200/60">
+                                  <MapPin size={12} className="text-slate-500" />
+                                  {c.city}
+                                </span>
+                              )}
+
+                              {c.phone && (
+                                <a
+                                  href={`tel:${c.phone}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-medium transition-colors border border-emerald-200/60"
+                                  title={`Call ${c.phone}`}
+                                >
+                                  <PhoneCall size={12} className="text-emerald-600" />
+                                  {c.phone}
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Mobile Action Buttons */}
+                        <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+                          <button
+                            onClick={() => setSelectedCustomerForModal(c)}
+                            className="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 font-semibold text-xs transition-colors border border-indigo-100 cursor-pointer"
+                          >
+                            <BarChart3 size={15} />
+                            <span>Spending & Purchases</span>
+                          </button>
+                          <button
+                            onClick={() => startEditCustomer(c)}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-700 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1 font-semibold text-xs transition-colors border border-blue-100 cursor-pointer"
+                            title="Edit customer"
+                          >
+                            <Edit size={15} />
+                            <span className="sr-only sm:not-sr-only">Edit</span>
+                          </button>
+                          <button
+                            onClick={() => deleteCustomer(c.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1 font-semibold text-xs transition-colors border border-red-100 cursor-pointer"
+                            title="Delete customer"
+                          >
+                            <Trash size={15} />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex gap-2 pt-3 border-t border-slate-100">
-                        <button onClick={() => setSelectedCustomerForModal(c)} className="flex-1 bg-indigo-50 text-indigo-700 py-2 px-3 rounded-lg hover:bg-indigo-100 flex items-center justify-center gap-1.5 font-medium text-xs transition-colors">
-                          <BarChart3 size={15} /> Spending & Purchases
-                        </button>
-                        <button onClick={() => startEditCustomer(c)} className="bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
-                          <Edit size={15} /> Edit
-                        </button>
-                        <button onClick={() => deleteCustomer(c.id)} className="bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
-                          <Trash size={15} /> Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {customers.length === 0 && (
-                    <div className="text-center py-12">
-                      <Users className="w-16 h-16 mx-auto text-slate-300 mb-3" />
-                      <p className="text-slate-400 font-medium">No customers yet</p>
-                      <p className="text-xs text-slate-400 mt-1">Add your first customer above</p>
+                    );
+                  })}
+
+                  {filteredCustomers.length === 0 && (
+                    <div className="text-center py-12 bg-white rounded-2xl border border-slate-200 p-6">
+                      <Users className="w-14 h-14 mx-auto text-slate-300 mb-3" />
+                      <p className="text-slate-600 font-semibold text-base">
+                        {customerSearchQuery ? 'No matching customers found' : 'No customers in your database'}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {customerSearchQuery ? 'Try adjusting your search query' : 'Add your first customer using the form above'}
+                      </p>
                     </div>
                   )}
                 </div>
 
                 {/* Desktop Table View */}
                 <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-100 text-slate-600 text-xs uppercase font-bold sticky top-0">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-100/90 text-slate-600 text-xs uppercase font-bold sticky top-0 z-10 backdrop-blur-sm border-b border-slate-200">
                       <tr>
-                        <th className="p-4 whitespace-nowrap">Customer Name</th>
+                        <th className="p-4 whitespace-nowrap">Customer</th>
                         <th className="p-4 whitespace-nowrap">City</th>
                         <th className="p-4 whitespace-nowrap">Phone</th>
                         <th className="p-4 text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {customers.map(c => (
-                        <tr key={c.id} className={`hover:bg-slate-50 transition-colors ${editingCustomerId === c.id ? 'bg-blue-50' : ''}`}>
-                          <td className="p-4 font-semibold text-slate-900">{c.name}</td>
-                          <td className="p-4 text-slate-600">{c.city}</td>
-                          <td className="p-4 text-slate-500">{c.phone || '-'}</td>
-                          <td className="p-4 text-right">
-                            <div className="flex justify-end gap-2">
-                              <button onClick={() => setSelectedCustomerForModal(c)} className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-2.5 py-1.5 rounded transition-colors flex items-center gap-1.5 text-xs font-bold border border-indigo-200 shadow-sm" title="View Customer Spending & Purchase Chart">
-                                <BarChart3 size={16} /> Spending & Purchases
-                              </button>
-                              <button onClick={() => startEditCustomer(c)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded transition-colors" title="Edit">
-                                <Edit size={18} />
-                              </button>
-                              <button onClick={() => deleteCustomer(c.id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded transition-colors" title="Delete">
-                                <Trash size={18} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {customers.length === 0 && (
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {filteredCustomers.map(c => {
+                        const initials = c.name
+                          ? c.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
+                          : 'C';
+
+                        return (
+                          <tr
+                            key={c.id}
+                            className={`hover:bg-slate-50/80 transition-colors ${
+                              editingCustomerId === c.id ? 'bg-blue-50/50' : ''
+                            }`}
+                          >
+                            <td className="p-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-bold text-xs flex items-center justify-center shadow-xs shrink-0">
+                                  {initials}
+                                </div>
+                                <span className="font-semibold text-slate-900">{c.name}</span>
+                              </div>
+                            </td>
+                            <td className="p-4 text-slate-600 text-sm">{c.city || '-'}</td>
+                            <td className="p-4 text-slate-600 text-sm font-mono">{c.phone || '-'}</td>
+                            <td className="p-4 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => setSelectedCustomerForModal(c)}
+                                  className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 text-xs font-bold border border-indigo-200 shadow-2xs cursor-pointer"
+                                  title="View Customer Spending & Purchase Chart"
+                                >
+                                  <BarChart3 size={15} /> Spending & Purchases
+                                </button>
+                                <button
+                                  onClick={() => startEditCustomer(c)}
+                                  className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded-xl transition-colors cursor-pointer"
+                                  title="Edit"
+                                >
+                                  <Edit size={17} />
+                                </button>
+                                <button
+                                  onClick={() => deleteCustomer(c.id)}
+                                  className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-xl transition-colors cursor-pointer"
+                                  title="Delete"
+                                >
+                                  <Trash size={17} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+
+                      {filteredCustomers.length === 0 && (
                         <tr>
                           <td colSpan={4} className="p-12 text-center">
                             <Users className="w-16 h-16 mx-auto text-slate-300 mb-3" />
-                            <p className="text-slate-400 font-medium">No customers in your database</p>
+                            <p className="text-slate-500 font-semibold text-base">
+                              {customerSearchQuery ? 'No matching customers' : 'No customers in your database'}
+                            </p>
                           </td>
                         </tr>
                       )}
@@ -1712,12 +1947,12 @@ const compressImageToMaxDataUrl = (
                   </table>
                 </div>
 
-                {/* Unsaved Customers from Past Invoices Banner (Rendered AFTER Saved Customers List) */}
+                {/* Unsaved Customers from Past Invoices Banner */}
                 {unsavedInvoiceCustomers.length > 0 && (
                   <div className="p-4 bg-amber-50/80 border-t border-amber-200 mt-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                       <div className="flex items-center gap-2">
-                        <UserPlus className="w-5 h-5 text-amber-600" />
+                        <UserPlus className="w-5 h-5 text-amber-600 shrink-0" />
                         <div>
                           <h3 className="font-bold text-amber-900 text-sm">
                             Unsaved Customers from Past Invoices ({unsavedInvoiceCustomers.length})
@@ -1731,23 +1966,26 @@ const compressImageToMaxDataUrl = (
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
                       {unsavedInvoiceCustomers.map(u => (
-                        <div key={u.name} className="bg-white p-3 rounded-lg border border-amber-200 shadow-sm flex items-center justify-between gap-2 hover:border-amber-300 transition-colors">
+                        <div
+                          key={u.name}
+                          className="bg-white p-3 rounded-xl border border-amber-200 shadow-2xs flex items-center justify-between gap-2 hover:border-amber-300 transition-colors"
+                        >
                           <div className="min-w-0 flex-1">
                             <div className="font-bold text-slate-800 text-sm truncate">{u.name}</div>
                             <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
                               {u.city && <span className="font-medium text-slate-600">📍 {u.city}</span>}
-                              <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                              <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
                                 {u.count} bill{u.count > 1 ? 's' : ''} (₹{u.totalSpent.toLocaleString('en-IN')})
                               </span>
                             </div>
                           </div>
                           <button
                             onClick={() => handleQuickSaveCustomer(u.name, u.city)}
-                            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shrink-0 transition-colors shadow-sm cursor-pointer"
+                            className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 shrink-0 transition-colors shadow-2xs cursor-pointer"
                             title={`Save ${u.name} to permanent customer list`}
                           >
                             <UserPlus size={14} />
-                            <span>Save Customer</span>
+                            <span>Save</span>
                           </button>
                         </div>
                       ))}

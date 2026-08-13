@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Invoice, Product, Customer } from '../types';
 import { CustomerSpendingModal } from './CustomerSpendingModal';
 import { ProductAnalysisModal } from './ProductAnalysisModal';
@@ -690,6 +690,31 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<Customer | null>(null);
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
   const [cachedPrediction, setCachedPrediction] = useState<AIAnalysisResult | null>(null);
+
+  // State & Ref for auto-hiding filter bar on scroll
+  const [isFilterVisible, setIsFilterVisible] = useState(true);
+  const lastScrollTop = useRef(0);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const currentScrollTop = e.currentTarget.scrollTop;
+    const delta = currentScrollTop - lastScrollTop.current;
+
+    if (Math.abs(delta) > 5) {
+      if (delta > 0 && currentScrollTop > 40) {
+        // Scrolling DOWN -> Hide filter
+        setIsFilterVisible(false);
+      } else if (delta < 0) {
+        // Scrolling UP -> Show filter
+        setIsFilterVisible(true);
+      }
+    }
+
+    if (currentScrollTop <= 10) {
+      setIsFilterVisible(true);
+    }
+
+    lastScrollTop.current = currentScrollTop;
+  };
 
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<AIAnalysisResult | null>(null);
@@ -1468,11 +1493,17 @@ Provide response in JSON with these fields:
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-3 md:p-6 bg-slate-50">
+        <div className="flex-1 overflow-y-auto p-3 md:p-6 bg-slate-50" onScroll={handleScroll}>
           <div className="space-y-4 md:space-y-6">
-            {/* --- Global Filter Bar (Zero Right Scroll: 3-Col Mobile Grid / Desktop Flex Row) --- */}
-            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 bg-white/95 backdrop-blur-md p-2.5 md:p-3 rounded-xl border border-slate-200 shadow-xs sticky top-0 z-20">
-              <div className="grid grid-cols-3 md:flex md:items-center gap-1.5 w-full md:w-auto select-none">
+            {/* --- Global Filter Bar (Auto-hide on scroll down, show on scroll up, zero right overflow) --- */}
+            <div
+              className={`flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2.5 bg-white/95 backdrop-blur-md p-2.5 md:p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-20 transition-all duration-300 ease-in-out max-w-full overflow-hidden ${
+                isFilterVisible
+                  ? 'translate-y-0 opacity-100'
+                  : '-translate-y-[150%] opacity-0 pointer-events-none'
+              }`}
+            >
+              <div className="grid grid-cols-3 sm:flex sm:flex-wrap lg:flex-nowrap items-center gap-1.5 w-full lg:w-auto select-none max-w-full">
                 {[
                   { id: 'month', label: 'Month', fullLabel: 'This Month', icon: '🗓️' },
                   { id: 'last-month', label: 'Last Month', fullLabel: 'Last Month', icon: '📅' },
@@ -1490,8 +1521,8 @@ Provide response in JSON with these fields:
                     <button
                       key={opt.id}
                       onClick={() => setTimeFilter(opt.id)}
-                      className={`px-2 md:px-3 py-1.5 text-[11px] md:text-xs font-bold rounded-lg md:rounded-full transition-all flex items-center justify-center gap-1 cursor-pointer text-center ${
-                        isFullWidthMobile ? 'col-span-3 md:col-span-1' : ''
+                      className={`px-2.5 md:px-3 py-1.5 text-[11px] md:text-xs font-bold rounded-lg md:rounded-full transition-all flex items-center justify-center gap-1 cursor-pointer text-center ${
+                        isFullWidthMobile ? 'col-span-3 sm:col-span-1' : ''
                       } ${
                         isActive
                           ? isSpecial
@@ -1503,15 +1534,15 @@ Provide response in JSON with these fields:
                       }`}
                     >
                       <span className="text-xs">{opt.icon}</span>
-                      <span className="md:hidden truncate">{opt.label}</span>
-                      <span className="hidden md:inline whitespace-nowrap">{opt.fullLabel}</span>
+                      <span className="xl:hidden truncate">{opt.label}</span>
+                      <span className="hidden xl:inline whitespace-nowrap">{opt.fullLabel}</span>
                     </button>
                   );
                 })}
               </div>
 
               {timeFilter === 'custom' && (
-                <div className="flex items-center gap-2 w-full md:w-auto bg-slate-50 p-1.5 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 md:slide-in-from-right-4">
+                <div className="flex items-center gap-2 w-full lg:w-auto bg-slate-50 p-1.5 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 lg:slide-in-from-right-4 shrink-0">
                   <input
                     type="date"
                     value={customStart}

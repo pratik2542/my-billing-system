@@ -1249,39 +1249,39 @@ export const ProductAnalysisModal: React.FC<ProductAnalysisModalProps> = ({
 
           {/* Active Month Info Banner */}
           {activeMonth && (
-            <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 p-3 sm:p-4 rounded-xl border border-emerald-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all">
-              <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-indigo-50 p-3 sm:p-4 rounded-xl border border-emerald-200/80 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3 transition-all min-w-0 overflow-hidden">
+              <div className="flex items-center gap-3 shrink-0">
                 <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white font-bold text-sm flex items-center justify-center shadow-sm shrink-0">
                   {activeMonth.label.split(' ')[0]}
                 </div>
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Inspecting Month</div>
-                  <div className="text-base font-extrabold text-slate-900">{activeMonth.label}</div>
+                  <div className="text-base font-extrabold text-slate-900 whitespace-nowrap">{activeMonth.label}</div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 w-full sm:w-auto text-xs">
-                <div className="bg-white p-2 rounded-lg border border-slate-200/80 shadow-2xs">
-                  <span className="text-slate-400 block text-[9px] font-bold">REVENUE</span>
-                  <span className="font-extrabold text-emerald-700 text-xs sm:text-sm truncate block">{formatINRFull(activeMonth.totalSpent)}</span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 w-full min-w-0 text-xs">
+                <div className="bg-white p-2 sm:p-2.5 rounded-lg border border-slate-200/80 shadow-2xs min-w-0 flex flex-col justify-center">
+                  <span className="text-slate-400 block text-[9px] font-bold uppercase tracking-wider">REVENUE</span>
+                  <span className="font-extrabold text-emerald-700 text-xs sm:text-sm truncate block" title={formatINRFull(activeMonth.totalSpent)}>{formatINRFull(activeMonth.totalSpent)}</span>
                 </div>
-                <div className="bg-white p-2 rounded-lg border border-slate-200/80 shadow-2xs">
-                  <span className="text-slate-400 block text-[9px] font-bold">VOLUME SOLD</span>
-                  <span className="font-extrabold text-indigo-700 text-xs sm:text-sm truncate block">{formatUnitBreakdown(activeMonth.unitsMap)}</span>
+                <div className="bg-white p-2 sm:p-2.5 rounded-lg border border-slate-200/80 shadow-2xs min-w-0 flex flex-col justify-center">
+                  <span className="text-slate-400 block text-[9px] font-bold uppercase tracking-wider">VOLUME SOLD</span>
+                  <span className="font-extrabold text-indigo-700 text-xs sm:text-sm truncate block" title={formatUnitBreakdown(activeMonth.unitsMap)}>{formatUnitBreakdown(activeMonth.unitsMap)}</span>
                 </div>
-                <div className="bg-white p-2 rounded-lg border border-slate-200/80 shadow-2xs">
-                  <span className="text-slate-400 block text-[9px] font-bold">INVOICES</span>
-                  <span className="font-extrabold text-slate-800 text-xs sm:text-sm block">{activeMonth.invoiceCount} Bills</span>
+                <div className="bg-white p-2 sm:p-2.5 rounded-lg border border-slate-200/80 shadow-2xs min-w-0 flex flex-col justify-center">
+                  <span className="text-slate-400 block text-[9px] font-bold uppercase tracking-wider">INVOICES</span>
+                  <span className="font-extrabold text-slate-800 text-xs sm:text-sm truncate block">{activeMonth.invoiceCount} Bills</span>
                 </div>
-                <div className="bg-white p-2 rounded-lg border border-slate-200/80 shadow-2xs">
-                  <span className="text-slate-400 block text-[9px] font-bold">AVG BILL SIZE</span>
-                  <span className="font-extrabold text-purple-700 text-xs sm:text-sm truncate block">
+                <div className="bg-white p-2 sm:p-2.5 rounded-lg border border-slate-200/80 shadow-2xs min-w-0 flex flex-col justify-center">
+                  <span className="text-slate-400 block text-[9px] font-bold uppercase tracking-wider">AVG BILL SIZE</span>
+                  <span className="font-extrabold text-purple-700 text-xs sm:text-sm truncate block" title={formatINRFull(activeMonth.invoiceCount > 0 ? activeMonth.totalSpent / activeMonth.invoiceCount : 0)}>
                     {formatINRFull(activeMonth.invoiceCount > 0 ? activeMonth.totalSpent / activeMonth.invoiceCount : 0)}
                   </span>
                 </div>
                 {activeMonthTopCustomer && (
-                  <div className="bg-white p-2 rounded-lg border border-slate-200/80 shadow-2xs col-span-2 sm:col-span-1">
-                    <span className="text-slate-400 block text-[9px] font-bold">TOP BUYER</span>
+                  <div className="bg-white p-2 sm:p-2.5 rounded-lg border border-slate-200/80 shadow-2xs col-span-2 sm:col-span-1 min-w-0 flex flex-col justify-center">
+                    <span className="text-slate-400 block text-[9px] font-bold uppercase tracking-wider">TOP BUYER</span>
                     <span className="font-extrabold text-slate-900 text-xs truncate block" title={activeMonthTopCustomer.name}>
                       {activeMonthTopCustomer.name}
                     </span>
@@ -1402,29 +1402,34 @@ export const ProductAnalysisModal: React.FC<ProductAnalysisModalProps> = ({
 
           {/* MONTHLY ITEMIZATION & CUSTOMER BREAKDOWN TABLE */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-3.5 sm:p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-indigo-600" />
-                  Monthly Customer Breakdown Table
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Select any month to inspect customer-wise purchase items and invoice dates</p>
+            <div className="p-3.5 sm:p-4 bg-slate-50 border-b border-slate-200 space-y-3 min-w-0">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 min-w-0">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>Monthly Customer Breakdown Table</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Select any month to inspect customer-wise purchase items and invoice dates</p>
+                </div>
+                <span className="text-[11px] font-semibold text-slate-400 self-start sm:self-center shrink-0">
+                  {stats.monthlyList.length} Month{stats.monthlyList.length > 1 ? 's' : ''} Available
+                </span>
               </div>
 
-              {/* Month Selector Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1.5 sm:pb-0 no-scrollbar scroll-smooth">
+              {/* Month Selector Pills - Wrap cleanly so ALL months are visible without horizontal scrolling */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                 {stats.monthlyList.map((m) => (
                   <button
                     key={m.key}
                     type="button"
                     onClick={() => setExpandedMonthKey(m.key)}
-                    className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                       expandedMonthKey === m.key
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-600/20'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                     }`}
                   >
-                    {m.label} ({formatINRFull(m.totalSpent)})
+                    {m.label} <span className={expandedMonthKey === m.key ? 'text-indigo-100' : 'text-slate-500'}>({formatINRFull(m.totalSpent)})</span>
                   </button>
                 ))}
               </div>
