@@ -2646,11 +2646,13 @@ Provide response in JSON with these fields:
                           }`}>
                           {idx + 1}
                         </div>
-                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
-                          const found = customers.find(c => c.name.toLowerCase().trim() === customer.name.toLowerCase().trim());
-                          setSelectedCustomerForModal(found || { id: customer.name, name: customer.name, city: '' });
+                        <div className={`flex-1 min-w-0 ${visibility.showCustomerPurchaseDetails !== false && visibility.showCustomerAnalysis !== false ? 'cursor-pointer' : ''}`} onClick={() => {
+                          if (visibility.showCustomerPurchaseDetails !== false && visibility.showCustomerAnalysis !== false) {
+                            const found = customers.find(c => c.name.toLowerCase().trim() === customer.name.toLowerCase().trim());
+                            setSelectedCustomerForModal(found || { id: customer.name, name: customer.name, city: '' });
+                          }
                         }}>
-                          <div className="font-semibold text-slate-800 text-xs sm:text-sm truncate hover:text-blue-600 underline-offset-2 hover:underline">{customer.name}</div>
+                          <div className={`font-semibold text-slate-800 text-xs sm:text-sm truncate ${visibility.showCustomerPurchaseDetails !== false && visibility.showCustomerAnalysis !== false ? 'hover:text-blue-600 underline-offset-2 hover:underline' : ''}`}>{customer.name}</div>
                           {(() => {
                             const vol = formatVolumeSummary(customer.unitsMap);
                             return (
@@ -2669,16 +2671,18 @@ Provide response in JSON with these fields:
                               {formatINRFull(Math.round(customer.totalSpent / customer.invoiceCount))}/avg
                             </div>
                           </div>
-                          <button
-                            onClick={() => {
-                              const found = customers.find(c => c.name.toLowerCase().trim() === customer.name.toLowerCase().trim());
-                              setSelectedCustomerForModal(found || { id: customer.name, name: customer.name, city: '' });
-                            }}
-                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded"
-                            title="View Spending & Purchase Chart"
-                          >
-                            <BarChart3 size={16} />
-                          </button>
+                          {visibility.showCustomerPurchaseDetails !== false && visibility.showCustomerAnalysis !== false && (
+                            <button
+                              onClick={() => {
+                                const found = customers.find(c => c.name.toLowerCase().trim() === customer.name.toLowerCase().trim());
+                                setSelectedCustomerForModal(found || { id: customer.name, name: customer.name, city: '' });
+                              }}
+                              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded"
+                              title="View Spending & Purchase Chart"
+                            >
+                              <BarChart3 size={16} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -2687,72 +2691,74 @@ Provide response in JSON with these fields:
               </div>
 
               {/* Detailed Customer Insights */}
-              <div className="bg-white p-4 rounded-lg shadow-sm">
-                <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Purchase Details</h4>
-                <div className="space-y-4 max-h-96 overflow-y-auto">
-                  {(stats.topCustomers || []).map((customer, idx) => {
-                    const topItems = Object.entries(customer.items)
-                      .map(([name, data]) => {
-                        const d = data as any;
-                        return typeof d === 'object' && d !== null
-                          ? { name, quantity: d.quantity || 0, amount: d.amount || 0, unitsMap: d.unitsMap || {} }
-                          : { name, quantity: 0, amount: 0, unitsMap: {} };
-                      })
-                      .sort((a, b) => b.amount - a.amount)
-                      .slice(0, 3);
+              {visibility.showCustomerPurchaseDetails !== false && (
+                <div className="bg-white p-4 rounded-lg shadow-sm">
+                  <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Purchase Details</h4>
+                  <div className="space-y-4 max-h-96 overflow-y-auto">
+                    {(stats.topCustomers || []).map((customer, idx) => {
+                      const topItems = Object.entries(customer.items)
+                        .map(([name, data]) => {
+                          const d = data as any;
+                          return typeof d === 'object' && d !== null
+                            ? { name, quantity: d.quantity || 0, amount: d.amount || 0, unitsMap: d.unitsMap || {} }
+                            : { name, quantity: 0, amount: 0, unitsMap: {} };
+                        })
+                        .sort((a, b) => b.amount - a.amount)
+                        .slice(0, 3);
 
-                    const customerVol = formatVolumeSummary(customer.unitsMap);
-                    const customerIcon = getVolumeIcon(customerVol.dominantUnit);
+                      const customerVol = formatVolumeSummary(customer.unitsMap);
+                      const customerIcon = getVolumeIcon(customerVol.dominantUnit);
 
-                    return (
-                      <div key={idx} className="border border-slate-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 mb-2">
-                          <div className="flex-1 min-w-0">
-                            <h5 className="font-bold text-slate-900 text-sm sm:text-base">{customer.name}</h5>
-                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs text-slate-500 mt-1">
-                              <span>📅 Last: {customer.lastPurchase}</span>
-                              <span>📊 {customer.invoiceCount} orders</span>
-                              {customerVol.text && <span>{customerIcon} {customerVol.text}</span>}
+                      return (
+                        <div key={idx} className="border border-slate-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2 mb-2">
+                            <div className="flex-1 min-w-0">
+                              <h5 className="font-bold text-slate-900 text-sm sm:text-base">{customer.name}</h5>
+                              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] sm:text-xs text-slate-500 mt-1">
+                                <span>📅 Last: {customer.lastPurchase}</span>
+                                <span>📊 {customer.invoiceCount} orders</span>
+                                {customerVol.text && <span>{customerIcon} {customerVol.text}</span>}
+                              </div>
+                            </div>
+                            <div className="text-left sm:text-right">
+                              <div className="text-sm sm:text-lg font-bold text-blue-600 whitespace-nowrap">
+                                {formatINRFull(customer.totalSpent)}
+                              </div>
+                              <div className="text-[11px] sm:text-xs text-slate-500">Total Spent</div>
                             </div>
                           </div>
-                          <div className="text-left sm:text-right">
-                            <div className="text-sm sm:text-lg font-bold text-blue-600 whitespace-nowrap">
-                              {formatINRFull(customer.totalSpent)}
-                            </div>
-                            <div className="text-[11px] sm:text-xs text-slate-500">Total Spent</div>
-                          </div>
-                        </div>
 
-                        <div className="mt-3 pt-3 border-t border-slate-100">
-                          <div className="text-[11px] sm:text-xs font-bold text-slate-600 mb-2 uppercase">Favorite Products</div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                            {topItems.map((item, i) => {
-                              const itemVol = formatVolumeSummary(item.unitsMap);
-                              const itemIcon = getVolumeIcon(itemVol.dominantUnit);
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <div className="text-[11px] sm:text-xs font-bold text-slate-600 mb-2 uppercase">Favorite Products</div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                              {topItems.map((item, i) => {
+                                const itemVol = formatVolumeSummary(item.unitsMap);
+                                const itemIcon = getVolumeIcon(itemVol.dominantUnit);
 
-                              return (
-                                <div key={i} className="bg-slate-50 p-2 rounded">
-                                  <div className="text-[11px] sm:text-xs font-medium text-slate-700 truncate" title={item.name}>{item.name}</div>
-                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 mt-1">
-                                    <div className="text-[11px] sm:text-xs font-bold text-slate-900 whitespace-nowrap">
-                                      {formatINRFull(item.amount)}
+                                return (
+                                  <div key={i} className="bg-slate-50 p-2 rounded">
+                                    <div className="text-[11px] sm:text-xs font-medium text-slate-700 truncate" title={item.name}>{item.name}</div>
+                                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 mt-1">
+                                      <div className="text-[11px] sm:text-xs font-bold text-slate-900 whitespace-nowrap">
+                                        {formatINRFull(item.amount)}
+                                      </div>
+                                      {itemVol.text ? (
+                                        <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">{itemIcon} {itemVol.text}</div>
+                                      ) : (
+                                        <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">📦 {item.quantity} qty</div>
+                                      )}
                                     </div>
-                                    {itemVol.text ? (
-                                      <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">{itemIcon} {itemVol.text}</div>
-                                    ) : (
-                                      <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">📦 {item.quantity} qty</div>
-                                    )}
                                   </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -3619,7 +3625,7 @@ Provide response in JSON with these fields:
       </div>
 
       {/* Customer Spending & Purchase Details Modal */}
-      {selectedCustomerForModal && visibility.showCustomerPurchaseDetails !== false && (
+      {selectedCustomerForModal && visibility.showCustomerPurchaseDetails !== false && visibility.showCustomerAnalysis !== false && (
         <CustomerSpendingModal
           customer={selectedCustomerForModal}
           invoices={invoices}

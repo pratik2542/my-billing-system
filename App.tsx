@@ -1402,10 +1402,24 @@ const compressImageToMaxDataUrl = (
     );
   }
 
-  // Check if AI Business Analysis permission is enabled for current user/business
+  // Check user permissions for Analytics & AI features
   const hasAiAnalyticsPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
     ? (settings.analyticsVisibility?.showAiBusinessAnalyst !== false)
     : (userProfile?.analyticsPermissions?.showAiBusinessAnalyst !== false);
+
+  const hasProductAnalysisPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+    ? (settings.analyticsVisibility?.showProductAnalysis !== false)
+    : (userProfile?.analyticsPermissions?.showProductAnalysis !== false);
+
+  const hasCustomerAnalysisPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+    ? (settings.analyticsVisibility?.showCustomerAnalysis !== false)
+    : (userProfile?.analyticsPermissions?.showCustomerAnalysis !== false);
+
+  const hasCustomerPurchaseDetailsPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+    ? (settings.analyticsVisibility?.showCustomerPurchaseDetails !== false)
+    : (userProfile?.analyticsPermissions?.showCustomerPurchaseDetails !== false);
+
+  const canViewCustomerSpending = hasCustomerAnalysisPermission && hasCustomerPurchaseDetailsPermission;
 
   const analyticsMenuTitle = hasAiAnalyticsPermission ? 'AI Analytics' : 'Analytics';
 
@@ -1664,18 +1678,10 @@ const compressImageToMaxDataUrl = (
               settings={{
                 ...settings,
                 analyticsVisibility: {
-                  showProductAnalysis: (userProfile?.role === 'admin' || isMainAdminUser(user))
-                    ? (settings.analyticsVisibility?.showProductAnalysis !== false)
-                    : (userProfile?.analyticsPermissions?.showProductAnalysis !== false),
-                  showCustomerAnalysis: (userProfile?.role === 'admin' || isMainAdminUser(user))
-                    ? (settings.analyticsVisibility?.showCustomerAnalysis !== false)
-                    : (userProfile?.analyticsPermissions?.showCustomerAnalysis !== false),
-                  showCustomerPurchaseDetails: (userProfile?.role === 'admin' || isMainAdminUser(user))
-                    ? (settings.analyticsVisibility?.showCustomerPurchaseDetails !== false)
-                    : (userProfile?.analyticsPermissions?.showCustomerPurchaseDetails !== false),
-                  showAiBusinessAnalyst: (userProfile?.role === 'admin' || isMainAdminUser(user))
-                    ? (settings.analyticsVisibility?.showAiBusinessAnalyst !== false)
-                    : (userProfile?.analyticsPermissions?.showAiBusinessAnalyst !== false),
+                  showProductAnalysis: hasProductAnalysisPermission,
+                  showCustomerAnalysis: hasCustomerAnalysisPermission,
+                  showCustomerPurchaseDetails: hasCustomerPurchaseDetailsPermission,
+                  showAiBusinessAnalyst: hasAiAnalyticsPermission,
                 }
               }}
               onAiRequest={handleAiRequest}
@@ -1796,13 +1802,15 @@ const compressImageToMaxDataUrl = (
                         </div>
                       </div>
                       <div className="flex gap-2 pt-3 border-t border-slate-100">
-                        <button onClick={() => setSelectedProductForModal(p)} className="flex-1 border border-emerald-200 bg-emerald-50 text-emerald-700 py-2 px-3 rounded-lg hover:bg-emerald-100 flex items-center justify-center gap-1.5 font-bold text-[10px] uppercase tracking-wider transition-colors">
-                          <BarChart3 size={14} /> Analytics
-                        </button>
-                        <button onClick={() => startEditProduct(p)} className="bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
+                        {hasProductAnalysisPermission && (
+                          <button onClick={() => setSelectedProductForModal(p)} className="flex-1 border border-emerald-200 bg-emerald-50 text-emerald-700 py-2 px-3 rounded-lg hover:bg-emerald-100 flex items-center justify-center gap-1.5 font-bold text-[10px] uppercase tracking-wider transition-colors">
+                            <BarChart3 size={14} /> Analytics
+                          </button>
+                        )}
+                        <button onClick={() => startEditProduct(p)} className={`${hasProductAnalysisPermission ? '' : 'flex-1'} bg-blue-50 text-blue-600 py-2 px-3 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors`}>
                           <Edit size={15} /> Edit
                         </button>
-                        <button onClick={() => deleteProduct(p.id)} className="bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors">
+                        <button onClick={() => deleteProduct(p.id)} className={`${hasProductAnalysisPermission ? '' : 'flex-1'} bg-red-50 text-red-600 py-2 px-3 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors`}>
                           <Trash size={15} /> Delete
                         </button>
                       </div>
@@ -1838,9 +1846,11 @@ const compressImageToMaxDataUrl = (
                           <td className="p-4"><span className="px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-700">{p.unit}</span></td>
                           <td className="p-4 text-right">
                             <div className="flex justify-end gap-2">
-                              <button onClick={() => setSelectedProductForModal(p)} className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2.5 py-1.5 rounded transition-colors flex items-center gap-1.5 text-xs font-bold border border-emerald-200 shadow-sm" title="View Product Sales & Buying Analysis">
-                                <BarChart3 size={16} /> Sales & Analytics
-                              </button>
+                              {hasProductAnalysisPermission && (
+                                <button onClick={() => setSelectedProductForModal(p)} className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2.5 py-1.5 rounded transition-colors flex items-center gap-1.5 text-xs font-bold border border-emerald-200 shadow-sm" title="View Product Sales & Buying Analysis">
+                                  <BarChart3 size={16} /> Sales & Analytics
+                                </button>
+                              )}
                               <button onClick={() => startEditProduct(p)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded transition-colors" title="Edit">
                                 <Edit size={18} />
                               </button>
@@ -2113,16 +2123,18 @@ const compressImageToMaxDataUrl = (
 
                         {/* Mobile Action Buttons */}
                         <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
-                          <button
-                            onClick={() => setSelectedCustomerForModal(c)}
-                            className="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 font-semibold text-xs transition-colors border border-indigo-100 cursor-pointer"
-                          >
-                            <BarChart3 size={15} />
-                            <span>Spending & Purchases</span>
-                          </button>
+                          {canViewCustomerSpending && (
+                            <button
+                              onClick={() => setSelectedCustomerForModal(c)}
+                              className="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 font-semibold text-xs transition-colors border border-indigo-100 cursor-pointer"
+                            >
+                              <BarChart3 size={15} />
+                              <span>Spending & Purchases</span>
+                            </button>
+                          )}
                           <button
                             onClick={() => startEditCustomer(c)}
-                            className="bg-blue-50 hover:bg-blue-100 text-blue-700 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1 font-semibold text-xs transition-colors border border-blue-100 cursor-pointer"
+                            className={`${canViewCustomerSpending ? '' : 'flex-1'} bg-blue-50 hover:bg-blue-100 text-blue-700 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1 font-semibold text-xs transition-colors border border-blue-100 cursor-pointer`}
                             title="Edit customer"
                           >
                             <Edit size={15} />
@@ -2130,7 +2142,7 @@ const compressImageToMaxDataUrl = (
                           </button>
                           <button
                             onClick={() => deleteCustomer(c.id)}
-                            className="bg-red-50 hover:bg-red-100 text-red-600 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1 font-semibold text-xs transition-colors border border-red-100 cursor-pointer"
+                            className={`${canViewCustomerSpending ? '' : 'flex-1'} bg-red-50 hover:bg-red-100 text-red-600 py-2.5 px-3 rounded-xl flex items-center justify-center gap-1 font-semibold text-xs transition-colors border border-red-100 cursor-pointer`}
                             title="Delete customer"
                           >
                             <Trash size={15} />
@@ -2167,7 +2179,7 @@ const compressImageToMaxDataUrl = (
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {filteredCustomers.map(c => {
                         const initials = c.name
-                          ? c.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
+                            ? c.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
                           : 'C';
 
                         return (
@@ -2189,13 +2201,15 @@ const compressImageToMaxDataUrl = (
                             <td className="p-4 text-slate-600 text-sm font-mono">{c.phone || '-'}</td>
                             <td className="p-4 text-right">
                               <div className="flex justify-end gap-2">
-                                <button
-                                  onClick={() => setSelectedCustomerForModal(c)}
-                                  className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 text-xs font-bold border border-indigo-200 shadow-2xs cursor-pointer"
-                                  title="View Customer Spending & Purchase Chart"
-                                >
-                                  <BarChart3 size={15} /> Spending & Purchases
-                                </button>
+                                {canViewCustomerSpending && (
+                                  <button
+                                    onClick={() => setSelectedCustomerForModal(c)}
+                                    className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 px-3 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 text-xs font-bold border border-indigo-200 shadow-2xs cursor-pointer"
+                                    title="View Customer Spending & Purchase Chart"
+                                  >
+                                    <BarChart3 size={15} /> Spending & Purchases
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => startEditCustomer(c)}
                                   className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded-xl transition-colors cursor-pointer"
@@ -3030,7 +3044,7 @@ const compressImageToMaxDataUrl = (
       </main>
 
       {/* Customer Spending & Purchase Details Modal */}
-      {selectedCustomerForModal && (
+      {selectedCustomerForModal && canViewCustomerSpending && (
         <CustomerSpendingModal
           customer={selectedCustomerForModal}
           invoices={invoices}
@@ -3040,7 +3054,7 @@ const compressImageToMaxDataUrl = (
       )}
 
       {/* Product Sales & Customer Buying Details Modal */}
-      {selectedProductForModal && (
+      {selectedProductForModal && hasProductAnalysisPermission && (
         <ProductAnalysisModal
           product={selectedProductForModal}
           invoices={invoices}
