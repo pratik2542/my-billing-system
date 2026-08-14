@@ -109,36 +109,20 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.CREATE_BILL);
   const [dataLoading, setDataLoading] = useState(false);
 
-  // Real-time Data from Firestore with Local Cache Fallback
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const cached = localStorage.getItem('cached_products');
-      return cached ? JSON.parse(cached) : [];
-    } catch { return []; }
-  });
-
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    try {
-      const cached = localStorage.getItem('cached_customers');
-      return cached ? JSON.parse(cached) : [];
-    } catch { return []; }
-  });
-
-  const [invoices, setInvoices] = useState<Invoice[]>(() => {
-    try {
-      const cached = localStorage.getItem('cached_invoices');
-      return cached ? JSON.parse(cached) : [];
-    } catch { return []; }
-  });
-
-  const [settings, setSettings] = useState<BusinessSettings>(() => {
-    try {
-      const cached = localStorage.getItem('cached_settings');
-      return cached ? { ...DEFAULT_BUSINESS_SETTINGS, ...JSON.parse(cached) } : DEFAULT_BUSINESS_SETTINGS;
-    } catch { return DEFAULT_BUSINESS_SETTINGS; }
-  });
+  // Real-time Data from Firestore
+  const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [settings, setSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
+  const hasUnsavedSettingsRef = useRef(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  const setHasUnsavedSettingsWithRef = (val: boolean) => {
+    hasUnsavedSettingsRef.current = val;
+    setHasUnsavedSettings(val);
+  };
 
   const getDefaultUnit = (s: BusinessSettings) => {
     if (s.customUnits && s.customUnits.length > 0) {
@@ -200,7 +184,6 @@ const App: React.FC = () => {
 
   // --- Settings Edit State ---
   const [tempSettings, setTempSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
-  const [hasUnsavedSettings, setHasUnsavedSettings] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [newUnitInput, setNewUnitInput] = useState('');
   const [settingsSubTab, setSettingsSubTab] = useState<'branding' | 'units' | 'billing' | 'tax_bank'>('branding');
@@ -429,116 +412,55 @@ const App: React.FC = () => {
   }, [user]);
 
   // --- Firestore Data Listeners (Fast Single-Pass Fetching) ---
+  // --- Firestore Data Listeners (Reactive Real-Time Fetching) ---
   useEffect(() => {
-    if (!user) return;
-
-    setDataLoading(true);
+    if (!user) {
+      setProducts([]);
+      setCustomers([]);
+      setInvoices([]);
+      setSettings(DEFAULT_BUSINESS_SETTINGS);
+      setTempSettings(DEFAULT_BUSINESS_SETTINGS);
+      setHasUnsavedSettingsWithRef(false);
+      return;
+    }
 
     const targetBizId = (userProfile?.businessId && userProfile.businessId !== 'global') ? userProfile.businessId : user.uid;
+    if (!targetBizId) return;
+
+    setDataLoading(true);
 
     const settingsRef = doc(db, 'users', targetBizId, 'settings', 'general');
     const productsQuery = query(collection(db, 'users', targetBizId, 'products'));
     const customersQuery = query(collection(db, 'users', targetBizId, 'customers'));
     const invoicesQuery = query(collection(db, 'users', targetBizId, 'invoices'), limit(1000));
 
-    // One-Time Safe Migration from users/global and root collections into users/{targetBizId}/
-    if (!migrationDoneRef.current && user.uid) {
-      migrationDoneRef.current = true;
-      (async () => {
-        try {
-          console.log(`[CONSOLIDATION_MIGRATION] Starting migration into users/${targetBizId}/...`);
-
-          // A. Migrate from users/global/ (if created)
-          try {
-            const gSettingsSnap = await getDoc(doc(db, 'users', 'global', 'settings', 'general'));
-            if (gSettingsSnap.exists()) {
-              const gData = gSettingsSnap.data();
-              if (gData && !isPlaceholderSetting(gData as any)) {
-                await setDoc(doc(db, 'users', targetBizId, 'settings', 'general'), sanitizeForFirestore(gData), { merge: true });
-              }
-              await deleteDoc(doc(db, 'users', 'global', 'settings', 'general')).catch(() => {});
-            }
-
-            const gProdSnap = await getDocs(collection(db, 'users', 'global', 'products'));
-            for (const pDoc of gProdSnap.docs) {
-              await setDoc(doc(db, 'users', targetBizId, 'products', pDoc.id), sanitizeForFirestore(pDoc.data()), { merge: true });
-              await deleteDoc(pDoc.ref).catch(() => {});
-            }
-
-            const gCustSnap = await getDocs(collection(db, 'users', 'global', 'customers'));
-            for (const cDoc of gCustSnap.docs) {
-              await setDoc(doc(db, 'users', targetBizId, 'customers', cDoc.id), sanitizeForFirestore(cDoc.data()), { merge: true });
-              await deleteDoc(cDoc.ref).catch(() => {});
-            }
-
-            const gInvSnap = await getDocs(collection(db, 'users', 'global', 'invoices'));
-            for (const iDoc of gInvSnap.docs) {
-              await setDoc(doc(db, 'users', targetBizId, 'invoices', iDoc.id), sanitizeForFirestore(iDoc.data()), { merge: true });
-              await deleteDoc(iDoc.ref).catch(() => {});
-            }
-          } catch (e: any) {
-            console.log('[CONSOLIDATION_MIGRATION] users/global check:', e.message);
-          }
-
-          // B. Migrate from Root collections (customers, products, invoices, settings)
-          try {
-            const rootProdSnap = await getDocs(collection(db, 'products'));
-            if (rootProdSnap.size > 0) {
-              for (const pDoc of rootProdSnap.docs) {
-                await setDoc(doc(db, 'users', targetBizId, 'products', pDoc.id), sanitizeForFirestore(pDoc.data()), { merge: true });
-                await deleteDoc(pDoc.ref).catch(() => {});
-              }
-              console.log(`[CONSOLIDATION_MIGRATION] Migrated and cleaned up ${rootProdSnap.size} root products.`);
-            }
-
-            const rootCustSnap = await getDocs(collection(db, 'customers'));
-            if (rootCustSnap.size > 0) {
-              for (const cDoc of rootCustSnap.docs) {
-                await setDoc(doc(db, 'users', targetBizId, 'customers', cDoc.id), sanitizeForFirestore(cDoc.data()), { merge: true });
-                await deleteDoc(cDoc.ref).catch(() => {});
-              }
-              console.log(`[CONSOLIDATION_MIGRATION] Migrated and cleaned up ${rootCustSnap.size} root customers.`);
-            }
-
-            const rootInvSnap = await getDocs(collection(db, 'invoices'));
-            if (rootInvSnap.size > 0) {
-              for (const iDoc of rootInvSnap.docs) {
-                await setDoc(doc(db, 'users', targetBizId, 'invoices', iDoc.id), sanitizeForFirestore(iDoc.data()), { merge: true });
-                await deleteDoc(iDoc.ref).catch(() => {});
-              }
-              console.log(`[CONSOLIDATION_MIGRATION] Migrated and cleaned up ${rootInvSnap.size} root invoices.`);
-            }
-
-            const rootSettingsSnap = await getDoc(doc(db, 'settings', 'general'));
-            if (rootSettingsSnap.exists()) {
-              const rData = rootSettingsSnap.data();
-              if (rData && !isPlaceholderSetting(rData as any)) {
-                await setDoc(doc(db, 'users', targetBizId, 'settings', 'general'), sanitizeForFirestore(rData), { merge: true });
-              }
-              await deleteDoc(doc(db, 'settings', 'general')).catch(() => {});
-            }
-          } catch (e: any) {
-            console.log('[CONSOLIDATION_MIGRATION] Root collection cleanup:', e.message);
-          }
-
-          console.log('[CONSOLIDATION_MIGRATION] Migration & cleanup finished successfully.');
-        } catch (err: any) {
-          console.warn('[CONSOLIDATION_MIGRATION] Error:', err.message);
-        }
-      })();
-    }
-
-    // 1. Settings Listener — purely reactive, NO automatic overwriting
+    // 1. Settings Listener — purely reactive & preserves in-progress unsaved settings
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
-        const loadedSettings = { ...DEFAULT_BUSINESS_SETTINGS, ...docSnap.data() } as BusinessSettings;
+        const data = docSnap.data() as Partial<BusinessSettings>;
+        const loadedSettings: BusinessSettings = {
+          ...DEFAULT_BUSINESS_SETTINGS,
+          ...data,
+          customUnits: Array.isArray(data.customUnits) ? data.customUnits : DEFAULT_BUSINESS_SETTINGS.customUnits,
+          columnHeaders: {
+            ...DEFAULT_COLUMN_HEADERS,
+            ...(data.columnHeaders || {})
+          },
+          analyticsVisibility: {
+            ...DEFAULT_BUSINESS_SETTINGS.analyticsVisibility,
+            ...(data.analyticsVisibility || {})
+          }
+        };
         setSettings(loadedSettings);
-        setTempSettings(loadedSettings);
+        if (!hasUnsavedSettingsRef.current) {
+          setTempSettings(loadedSettings);
+        }
         setPermissionError(null);
-        try { localStorage.setItem('cached_settings', JSON.stringify(loadedSettings)); } catch {}
       } else {
         setSettings(DEFAULT_BUSINESS_SETTINGS);
-        setTempSettings(DEFAULT_BUSINESS_SETTINGS);
+        if (!hasUnsavedSettingsRef.current) {
+          setTempSettings(DEFAULT_BUSINESS_SETTINGS);
+        }
       }
     }, (err) => {
       console.warn('Settings snapshot listener error:', err.message);
@@ -552,7 +474,6 @@ const App: React.FC = () => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
       setPermissionError(null);
-      try { localStorage.setItem('cached_products', JSON.stringify(prods)); } catch {}
     }, (err) => {
       console.warn('Products snapshot listener error:', err.message);
     });
@@ -562,7 +483,6 @@ const App: React.FC = () => {
       const custs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
       setCustomers(custs);
       setPermissionError(null);
-      try { localStorage.setItem('cached_customers', JSON.stringify(custs)); } catch {}
     }, (err) => {
       console.warn('Customers snapshot listener error:', err.message);
     });
@@ -573,7 +493,6 @@ const App: React.FC = () => {
       setInvoices(invs);
       setDataLoading(false);
       setPermissionError(null);
-      try { localStorage.setItem('cached_invoices', JSON.stringify(invs)); } catch {}
     }, (err) => {
       console.warn('Invoices snapshot listener error:', err.message);
       setDataLoading(false);
@@ -589,27 +508,6 @@ const App: React.FC = () => {
       unsubInvoices();
     };
   }, [user, userProfile?.businessId]);
-
-  // Auto-heal nextInvoiceNumber if existing invoices in database exceed current setting
-  useEffect(() => {
-    if (!invoices || invoices.length === 0) return;
-    let maxId = 0;
-    invoices.forEach(inv => {
-      const cleanStr = (inv.id || '').toString().replace(/[^0-9]/g, '');
-      const num = parseInt(cleanStr, 10);
-      if (!isNaN(num) && num > maxId) {
-        maxId = num;
-      }
-    });
-
-    if (maxId >= (settings.nextInvoiceNumber || 1)) {
-      const correctNext = maxId + 1;
-      setSettings(prev => ({ ...prev, nextInvoiceNumber: correctNext }));
-      if (user) {
-        updateDoc(getSettingsRef(), { nextInvoiceNumber: correctNext }).catch(() => {});
-      }
-    }
-  }, [invoices, settings.nextInvoiceNumber, user]);
 
   const handleClaimSession = async () => {
     if (!user) return;
@@ -711,7 +609,7 @@ const App: React.FC = () => {
         return;
       }
       setTempSettings(settings);
-      setHasUnsavedSettings(false);
+      setHasUnsavedSettingsWithRef(false);
     }
     setActiveTab(tab);
   };
@@ -791,7 +689,7 @@ const App: React.FC = () => {
     setSettings(DEFAULT_BUSINESS_SETTINGS);
     setTempSettings(DEFAULT_BUSINESS_SETTINGS);
     setHasUnsavedChanges(false);
-    setHasUnsavedSettings(false);
+    setHasUnsavedSettingsWithRef(false);
     setEditingInvoice(null);
     try {
       localStorage.removeItem('cached_products');
@@ -804,7 +702,11 @@ const App: React.FC = () => {
   // --- Data Operations (Firestore) ---
 
   // Target Firestore Path Helpers (Uniform Per-User/Workspace Collections)
-  const getWorkspaceId = () => (userProfile?.businessId || user?.uid || '');
+  const getWorkspaceId = () => {
+    const bId = userProfile?.businessId;
+    if (bId && bId !== 'global') return bId;
+    return user?.uid || '';
+  };
 
   const getSettingsRef = () => doc(db, 'users', getWorkspaceId(), 'settings', 'general');
   const getProductsCol = () => collection(db, 'users', getWorkspaceId(), 'products');
@@ -960,13 +862,14 @@ const compressImageToMaxDataUrl = (
 };
 
   const areSettingsEqual = (a: BusinessSettings, b: BusinessSettings) => {
+    if (!a || !b) return a === b;
     return JSON.stringify(a) === JSON.stringify(b);
   };
 
   // Handle temporary settings changes (Smart comparison against saved settings)
   const handleTempSettingsChange = (newSettings: BusinessSettings) => {
     setTempSettings(newSettings);
-    setHasUnsavedSettings(!areSettingsEqual(newSettings, settings));
+    setHasUnsavedSettingsWithRef(!areSettingsEqual(newSettings, settings));
   };
 
   // Save settings with confirmation and automatic image compression
@@ -997,8 +900,11 @@ const compressImageToMaxDataUrl = (
 
       setSettings(settingsToSave);
       setTempSettings(settingsToSave);
-      setHasUnsavedSettings(false);
-      try { localStorage.setItem('cached_settings', JSON.stringify(settingsToSave)); } catch {}
+      setHasUnsavedSettingsWithRef(false);
+      try {
+        const wsId = getWorkspaceId();
+        if (wsId) localStorage.setItem(`cached_settings_${wsId}`, JSON.stringify(settingsToSave));
+      } catch {}
       alert('Settings saved successfully!');
     } catch (e) {
       console.error("Error saving settings: ", e);

@@ -196,30 +196,12 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     }
   }, [editingInvoice, customers]);
 
-  // Calculate highest existing invoice number to prevent duplicate/stale bill numbers
-  const maxInvoiceNumInHistory = React.useMemo(() => {
-    let maxId = 0;
-    if (invoices && invoices.length > 0) {
-      invoices.forEach(inv => {
-        const cleanStr = (inv.id || '').toString().replace(/[^0-9]/g, '');
-        const num = parseInt(cleanStr, 10);
-        if (!isNaN(num) && num > maxId) {
-          maxId = num;
-        }
-      });
-    }
-    return maxId;
-  }, [invoices]);
-
-  const effectiveNextBillNo = Math.max(settings.nextInvoiceNumber || 1, maxInvoiceNumInHistory + 1);
-
-  // Sync billNo if settings or invoice history change externally or on mount
+  // Sync billNo from settings when not editing or just saved
   useEffect(() => {
-    // Only update billNo if we're not looking at a just-saved invoice or editing
     if (!isSaved && !editingInvoice) {
-      setBillNo(effectiveNextBillNo.toString());
+      setBillNo((settings.nextInvoiceNumber || 1).toString());
     }
-  }, [effectiveNextBillNo, isSaved, editingInvoice]);
+  }, [settings.nextInvoiceNumber, isSaved, editingInvoice]);
 
   // Notify parent of unsaved changes
   useEffect(() => {
