@@ -2,6 +2,7 @@ export interface Product {
   id: string;
   name: string;
   rate: number;
+  price?: number;
   unit: string; // e.g., kg, gm, pcs
   packing?: string; // e.g. 1 kg, 250 gm
 }
@@ -11,6 +12,7 @@ export interface Customer {
   name: string;
   city: string;
   phone?: string;
+  mobile?: string;
 }
 
 export interface InvoiceItem {
@@ -44,9 +46,12 @@ export interface AnalyticsVisibilitySettings {
 
 export interface BusinessSettings {
   name: string;
+  businessName?: string;
   subName: string;
   address: string;
   mobile: string;
+  phone?: string;
+  email?: string;
   logoInitial: string;
   themeColor: string;
   logoUrl?: string;
@@ -63,6 +68,7 @@ export interface BusinessSettings {
   // GST Settings
   enableGst: boolean;
   gstin?: string;
+  gstNo?: string;
   defaultGstRate?: number;
   // UPI Settings
   upiId?: string;
@@ -75,6 +81,9 @@ export interface BusinessSettings {
   nameLetterSpacing?: string;
   // Custom Invoice Table Headers
   columnHeaders?: InvoiceHeaderCustomization;
+  // Declaration Settings
+  showDeclaration?: boolean;
+  declarationText?: string;
   // Analytics & AI Visibility Toggles (Admin)
   analyticsVisibility?: AnalyticsVisibilitySettings;
 }

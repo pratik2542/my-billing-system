@@ -2739,6 +2739,61 @@ const compressImageToMaxDataUrl = (
                         </div>
                       </div>
 
+                      {/* Invoice Declaration Customization */}
+                      <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-1 flex items-center gap-2">
+                          <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+                          Invoice Declaration
+                        </h3>
+                        <p className="text-[11px] sm:text-xs text-slate-500 mb-3">
+                          Customize or hide the legal declaration note printed at the bottom of your invoices.
+                        </p>
+
+                        <div className="space-y-3">
+                          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200">
+                            <label htmlFor="showDeclaration" className="flex items-start gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                id="showDeclaration"
+                                checked={tempSettings.showDeclaration !== false}
+                                onChange={e => handleTempSettingsChange({ ...tempSettings, showDeclaration: e.target.checked })}
+                                className="w-4 h-4 sm:w-5 sm:h-5 accent-indigo-600 cursor-pointer mt-0.5 shrink-0"
+                              />
+                              <div>
+                                <span className="text-xs sm:text-sm font-bold text-slate-800 block">Show Declaration on Invoice</span>
+                                <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">Displays the declaration note in the footer of printed and shared bills.</span>
+                              </div>
+                            </label>
+                          </div>
+
+                          {tempSettings.showDeclaration !== false && (
+                            <div>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <label className="block text-xs sm:text-sm font-bold text-slate-600">Declaration Note</label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTempSettingsChange({
+                                    ...tempSettings,
+                                    declarationText: "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct."
+                                  })}
+                                  className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer underline"
+                                >
+                                  Reset to Standard Default
+                                </button>
+                              </div>
+                              <textarea
+                                rows={3}
+                                value={tempSettings.declarationText ?? "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct."}
+                                onChange={e => handleTempSettingsChange({ ...tempSettings, declarationText: e.target.value })}
+                                placeholder="Enter custom declaration text..."
+                                className="w-full p-2.5 border border-slate-300 rounded-lg text-xs sm:text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-y"
+                              />
+                              <p className="text-[11px] text-slate-500 mt-1">This text appears right below the "Declaration:" label on printed bills.</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
                       {/* Payment Tracking Feature Toggle */}
                       <div className="bg-purple-50 p-3 sm:p-4 rounded-xl border border-purple-200">
                         <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-2 sm:mb-3 flex items-center gap-2">

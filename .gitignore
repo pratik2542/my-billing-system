@@ -13,6 +13,8 @@ dist-ssr
 *.local
 .env
 .env.*
+backups/
+serviceAccountKey.json
 
 # Editor directories and files
 .vscode/*

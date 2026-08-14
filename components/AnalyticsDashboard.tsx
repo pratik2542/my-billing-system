@@ -2122,7 +2122,7 @@ Provide response in JSON with these fields:
         repeat_purchase_rate_percent: stats.repeatPurchaseRate,
         avg_ltv: stats.avgLTV,
         total_customers: stats.totalCustomers,
-        total_kg_sold: (stats.totalWeightGramsSold || 0) / 1000,
+        total_kg_sold: ((stats as any).totalWeightGramsSold || 0) / 1000,
         top_products_by_revenue: stats.chartDataProducts,
         top_customers_by_revenue: stats.chartDataCustomers,
         daily_revenue_trend: stats.chartDataRevenueAll.slice(-14)
@@ -2552,7 +2552,7 @@ Provide response in JSON with these fields:
                           className="flex-1 min-w-0 cursor-pointer"
                           onClick={() => {
                             const found = products.find(p => p.name.toLowerCase().trim() === prod.name.toLowerCase().trim());
-                            setSelectedProductForModal(found || { id: prod.name, name: prod.name, price: 0 });
+                            setSelectedProductForModal(found || { id: prod.name, name: prod.name, rate: 0, unit: 'Kg' });
                           }}
                         >
                           <div className="font-semibold text-slate-800 text-xs sm:text-sm truncate hover:text-purple-600 underline-offset-2 hover:underline">
@@ -2579,7 +2579,7 @@ Provide response in JSON with these fields:
                           <button
                             onClick={() => {
                               const found = products.find(p => p.name.toLowerCase().trim() === prod.name.toLowerCase().trim());
-                              setSelectedProductForModal(found || { id: prod.name, name: prod.name, price: 0 });
+                              setSelectedProductForModal(found || { id: prod.name, name: prod.name, rate: 0, unit: 'Kg' });
                             }}
                             className="p-1.5 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
                             title="Inspect Product Breakdown & Analysis"
@@ -3446,15 +3446,16 @@ Provide response in JSON with these fields:
                           {m.role === 'assistant' && m.charts && m.charts.length > 0 && (
                             <div className="mt-3 space-y-3">
                               {m.charts.map((c, ci) => {
-                                const typeStr = (c.type || '').toLowerCase();
+                                const chartAny = c as any;
+                                const typeStr = (chartAny.type || '').toLowerCase();
                                 const isPie = typeStr.includes('pie') || typeStr.includes('donut');
-                                const isProgress = typeStr.includes('progress') || typeStr.includes('rank') || (typeStr === '' && Array.isArray(c.bars));
+                                const isProgress = typeStr.includes('progress') || typeStr.includes('rank') || (typeStr === '' && Array.isArray(chartAny.bars));
                                 const isBar = typeStr.includes('bar') || typeStr.includes('column') || typeStr.includes('line') || typeStr.includes('daily') || typeStr.includes('trend') || (!isPie && !isProgress);
 
                                 return (
                                   <div key={ci} className="bg-white rounded-xl p-3 text-slate-900 shadow-sm border border-slate-200">
                                     <div className="font-bold text-xs text-slate-800 mb-2 border-b border-slate-100 pb-1.5 flex items-center justify-between">
-                                      <span>{c.title || 'Data Chart'}</span>
+                                      <span>{chartAny.title || 'Data Chart'}</span>
                                       <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">
                                         {isPie ? 'Pie Chart' : isProgress ? 'Progress Ranking' : 'Bar Trend'}
                                       </span>
@@ -3463,7 +3464,7 @@ Provide response in JSON with these fields:
                                     {isBar && (
                                       <div className="h-44 w-full">
                                         {(() => {
-                                          const raw = Array.isArray(c.data) ? c.data : Array.isArray(c.bars) ? c.bars : [];
+                                          const raw = Array.isArray(chartAny.data) ? chartAny.data : Array.isArray(chartAny.bars) ? chartAny.bars : [];
                                           const normalized = raw
                                             .map((d: any) => {
                                               if (!d || typeof d !== 'object') return null;
@@ -3472,7 +3473,7 @@ Provide response in JSON with these fields:
                                               if (!dateStr || dateStr === 'N/A' || isNaN(revenue)) return null;
                                               return { dateStr, revenue };
                                             })
-                                            .filter((item): item is { dateStr: string; revenue: number } => item !== null && item.revenue > 0);
+                                            .filter((item: any): item is { dateStr: string; revenue: number } => item !== null && item.revenue > 0);
 
                                           const finalData = normalized.length > 0
                                             ? normalized
@@ -3490,7 +3491,7 @@ Provide response in JSON with these fields:
                                     {isPie && (
                                       <div className="w-full min-h-[14rem]">
                                         {(() => {
-                                          const raw = Array.isArray(c.data) ? c.data : [];
+                                          const raw = Array.isArray(chartAny.data) ? chartAny.data : [];
                                           const normalized = raw
                                             .map((d: any) => {
                                               if (!d || typeof d !== 'object') return null;
@@ -3500,14 +3501,14 @@ Provide response in JSON with these fields:
                                               if (!name || isNaN(value) || value <= 0) return null;
                                               return { name, value, weight: isNaN(weight) ? 0 : weight };
                                             })
-                                            .filter((item): item is { name: string; value: number; weight?: number } => item !== null);
+                                            .filter((item: any): item is { name: string; value: number; weight?: number } => item !== null);
 
                                           const finalData = normalized.length > 0
                                             ? normalized
                                             : stats.chartDataProducts.map(p => ({ name: p.name, value: p.value, weight: p.weight }));
 
                                           return finalData.length > 0 ? (
-                                            <SimplePieChart data={finalData} showWeight={c.showWeight} />
+                                            <SimplePieChart data={finalData} showWeight={chartAny.showWeight} />
                                           ) : (
                                             <div className="text-xs text-slate-400 py-6 text-center">No product data recorded to plot pie chart</div>
                                           );
@@ -3518,7 +3519,7 @@ Provide response in JSON with these fields:
                                     {isProgress && (
                                       <div className="space-y-2 py-1">
                                         {(() => {
-                                          const raw = Array.isArray(c.bars) ? c.bars : Array.isArray(c.data) ? c.data : [];
+                                          const raw = Array.isArray(chartAny.bars) ? chartAny.bars : Array.isArray(chartAny.data) ? chartAny.data : [];
                                           const normalized = raw
                                             .map((b: any) => {
                                               if (!b || typeof b !== 'object') return null;
@@ -3528,7 +3529,7 @@ Provide response in JSON with these fields:
                                               if (!label || isNaN(value) || value <= 0) return null;
                                               return { label, value, meta };
                                             })
-                                            .filter((item): item is { label: string; value: number; meta?: string } => item !== null);
+                                            .filter((item: any): item is { label: string; value: number; meta?: string } => item !== null);
 
                                           const finalBars = normalized.length > 0
                                             ? normalized
@@ -3537,15 +3538,15 @@ Provide response in JSON with these fields:
                                           if (finalBars.length === 0) {
                                             return <div className="text-xs text-slate-400 py-4 text-center">No metrics recorded to plot ranking</div>;
                                           }
-                                          const maxVal = Math.max(...finalBars.map(b => b.value), 1);
-                                          return finalBars.map((b) => (
+                                          const maxVal = Math.max(...finalBars.map((b: any) => b.value), 1);
+                                          return finalBars.map((b: any) => (
                                             <React.Fragment key={b.label}>
                                               <ProgressBar
                                                 label={b.label}
                                                 value={b.value}
                                                 max={maxVal}
                                                 color="bg-indigo-600"
-                                                valuePrefix={c.valuePrefix ?? '₹'}
+                                                valuePrefix={chartAny.valuePrefix ?? '₹'}
                                                 meta={b.meta}
                                               />
                                             </React.Fragment>

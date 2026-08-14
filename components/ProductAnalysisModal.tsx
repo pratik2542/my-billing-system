@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { Product, Invoice, Customer, BusinessSettings } from '../types';
+import { DEFAULT_BUSINESS_SETTINGS } from '../constants';
 import {
   X,
   ShoppingBag,
@@ -60,7 +61,7 @@ interface MonthlySummary {
   }>;
 }
 
-export type ChartType = 'bar' | 'line' | 'pie' | 'histogram';
+export type ChartType = 'bar' | 'line' | 'pie' | 'histogram' | 'scatter' | 'bubble' | 'area';
 
 const COLORS = ['#10b981', '#6366f1', '#ec4899', '#f97316', '#8b5cf6', '#06b6d4', '#eab308', '#3b82f6'];
 
@@ -1607,7 +1608,7 @@ export const ProductAnalysisModal: React.FC<ProductAnalysisModalProps> = ({
                   customerCity={viewingInvoice.customerCity}
                   customerMobile={viewingInvoice.customerMobile}
                   items={viewingInvoice.items}
-                  settings={settings || { businessName: 'INVOICE', address: '', phone: '', email: '', gstNo: '' }}
+                  settings={settings || DEFAULT_BUSINESS_SETTINGS}
                   gstRate={viewingInvoice.gstRate}
                   payments={viewingInvoice.payments}
                 />

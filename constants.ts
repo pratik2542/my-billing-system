@@ -57,6 +57,8 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   customUnits: ['Kg', 'Gm', 'Pkt', 'Ltr', 'Pcs', 'Meter', 'Box', 'Dozen', 'Ft', 'Sq Ft'],
   nameLetterSpacing: '0.05em',
   columnHeaders: DEFAULT_COLUMN_HEADERS,
+  showDeclaration: true,
+  declarationText: "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
   analyticsVisibility: {
     showProductAnalysis: true,
     showCustomerAnalysis: true,

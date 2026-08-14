@@ -468,13 +468,15 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
               </div>
             </div>
 
-            {/* Signatures */}
+            {/* Signatures & Declaration */}
             <div className="flex justify-between items-end p-2.5 border-t-2 bg-white" style={{ borderColor: borderColor }}>
               <div className="text-center w-5/12">
-                <div className="text-[10px] text-left leading-snug italic text-slate-500">
-                  <span className="font-bold not-italic text-slate-700">Declaration:</span><br />
-                  We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
-                </div>
+                {settings.showDeclaration !== false && (
+                  <div className="text-[10px] text-left leading-snug italic text-slate-500">
+                    <span className="font-bold not-italic text-slate-700">Declaration:</span><br />
+                    {settings.declarationText || "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct."}
+                  </div>
+                )}
               </div>
               <div className="text-center w-4/12">
                 <p className="font-bold mb-1 text-xs" style={{ color: themeColor }}>For, {settings.signatureName || settings.name}</p>
