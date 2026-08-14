@@ -56,5 +56,11 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   enablePaymentTracking: true,
   customUnits: ['Kg', 'Gm', 'Pkt', 'Ltr', 'Pcs', 'Meter', 'Box', 'Dozen', 'Ft', 'Sq Ft'],
   nameLetterSpacing: '0.05em',
-  columnHeaders: DEFAULT_COLUMN_HEADERS
+  columnHeaders: DEFAULT_COLUMN_HEADERS,
+  analyticsVisibility: {
+    showProductAnalysis: true,
+    showCustomerAnalysis: true,
+    showCustomerPurchaseDetails: true,
+    showAiBusinessAnalyst: true
+  }
 };

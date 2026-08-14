@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X } from 'lucide-react';
-import { InvoiceTemplate } from './InvoiceTemplate';
-import { Product, Customer, InvoiceItem, BusinessSettings, Invoice } from '../types';
+import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X, CreditCard, CheckCircle2, Wallet, Banknote } from 'lucide-react';
+import { InvoiceTemplate, formatBillNum, formatBillQty } from './InvoiceTemplate';
+import { Product, Customer, InvoiceItem, BusinessSettings, Invoice, PaymentMode, PaymentEntry } from '../types';
 
 interface InvoiceGeneratorProps {
   products: Product[];
   customers: Customer[];
   invoices?: Invoice[];
   settings: BusinessSettings;
+  enablePaymentTracking?: boolean;
   onUpdateSettings: (newSettings: BusinessSettings) => void;
   onSaveInvoice: (invoice: Invoice) => Promise<void>;
   onUnsavedChanges?: (hasChanges: boolean) => void;
@@ -20,6 +21,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   customers,
   invoices = [],
   settings,
+  enablePaymentTracking = (settings.enablePaymentTracking !== false),
   onUpdateSettings,
   onSaveInvoice,
   onUnsavedChanges,
@@ -32,12 +34,21 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerCity, setCustomerCity] = useState('');
+  const [customerMobile, setCustomerMobile] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionRef = useRef<HTMLDivElement>(null);
 
+  // Payment at Creation states
+  const [recordPayment, setRecordPayment] = useState<boolean>(false);
+  const [paymentType, setPaymentType] = useState<'full' | 'partial'>('full');
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>('Cash');
+  const [paymentDate, setPaymentDate] = useState<string>(new Date().toLocaleDateString('en-GB'));
+  const [paymentNote, setPaymentNote] = useState<string>('');
+
   // Merge registered customers with unique customer names from past invoices
   const allCustomerOptions = React.useMemo(() => {
-    const map = new Map<string, { id: string; name: string; city: string; isFromInvoice: boolean }>();
+    const map = new Map<string, { id: string; name: string; city: string; phone: string; isFromInvoice: boolean }>();
 
     // 1. Saved database customers
     customers.forEach(c => {
@@ -46,6 +57,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           id: c.id,
           name: c.name.trim(),
           city: c.city || '',
+          phone: c.phone || '',
           isFromInvoice: false
         });
       }
@@ -61,6 +73,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
               id: `inv-${key}`,
               name: inv.customerName.trim(),
               city: inv.customerCity || '',
+              phone: inv.customerMobile || '',
               isFromInvoice: true
             });
           }
@@ -87,7 +100,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     if (!customerName.trim()) return allCustomerOptions;
     const query = customerName.trim().toLowerCase();
     return allCustomerOptions.filter(c =>
-      c.name.toLowerCase().includes(query) || c.city.toLowerCase().includes(query)
+      c.name.toLowerCase().includes(query) ||
+      c.city.toLowerCase().includes(query) ||
+      (c.phone && c.phone.toLowerCase().includes(query))
     );
   }, [allCustomerOptions, customerName]);
 
@@ -147,6 +162,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       setDate(editingInvoice.date);
       setCustomerName(editingInvoice.customerName);
       setCustomerCity(editingInvoice.customerCity);
+      setCustomerMobile(editingInvoice.customerMobile || '');
       setItems(editingInvoice.items);
       setIsSaved(false);
       // Try to find matching customer
@@ -154,24 +170,64 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       if (matchingCustomer) {
         setSelectedCustomer(matchingCustomer);
       }
+
+      // Pre-fill payment details if existing payments exist
+      if (editingInvoice.payments && editingInvoice.payments.length > 0) {
+        setRecordPayment(true);
+        const totalP = editingInvoice.payments.reduce((s, p) => s + p.amount, 0);
+        const lastP = editingInvoice.payments[editingInvoice.payments.length - 1];
+        setPaymentMode(lastP.mode);
+        setPaymentDate(lastP.date || editingInvoice.date);
+        setPaymentNote(lastP.note || '');
+        if (totalP >= editingInvoice.total - 0.01) {
+          setPaymentType('full');
+          setPaymentAmount(editingInvoice.total.toString());
+        } else {
+          setPaymentType('partial');
+          setPaymentAmount(totalP.toString());
+        }
+      } else {
+        setRecordPayment(false);
+        setPaymentType('full');
+        setPaymentAmount('');
+        setPaymentMode('Cash');
+        setPaymentNote('');
+      }
     }
   }, [editingInvoice, customers]);
 
-  // Sync billNo if settings change externally or on mount
+  // Calculate highest existing invoice number to prevent duplicate/stale bill numbers
+  const maxInvoiceNumInHistory = React.useMemo(() => {
+    let maxId = 0;
+    if (invoices && invoices.length > 0) {
+      invoices.forEach(inv => {
+        const cleanStr = (inv.id || '').toString().replace(/[^0-9]/g, '');
+        const num = parseInt(cleanStr, 10);
+        if (!isNaN(num) && num > maxId) {
+          maxId = num;
+        }
+      });
+    }
+    return maxId;
+  }, [invoices]);
+
+  const effectiveNextBillNo = Math.max(settings.nextInvoiceNumber || 1, maxInvoiceNumInHistory + 1);
+
+  // Sync billNo if settings or invoice history change externally or on mount
   useEffect(() => {
     // Only update billNo if we're not looking at a just-saved invoice or editing
     if (!isSaved && !editingInvoice) {
-      setBillNo(settings.nextInvoiceNumber.toString());
+      setBillNo(effectiveNextBillNo.toString());
     }
-  }, [settings.nextInvoiceNumber, isSaved, editingInvoice]);
+  }, [effectiveNextBillNo, isSaved, editingInvoice]);
 
   // Notify parent of unsaved changes
   useEffect(() => {
     if (onUnsavedChanges) {
-      const hasChanges = (items.length > 0 || customerName.trim() !== '' || customerCity.trim() !== '') && !isSaved;
+      const hasChanges = (items.length > 0 || customerName.trim() !== '' || customerCity.trim() !== '' || customerMobile.trim() !== '') && !isSaved;
       onUnsavedChanges(hasChanges);
     }
-  }, [items, customerName, customerCity, isSaved, onUnsavedChanges]);
+  }, [items, customerName, customerCity, customerMobile, isSaved, onUnsavedChanges]);
 
   // Auto-fill product fields when selection changes
   useEffect(() => {
@@ -222,17 +278,43 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     return () => window.removeEventListener('resize', calculateScale);
   }, [showPreviewMobile]);
 
-  // Calculations
-  const subtotal = items.reduce((sum, i) => sum + i.amount, 0);
+  // Calculations (rounded to 2 decimal places max)
+  const subtotal = Math.round(items.reduce((sum, i) => sum + (Number(i.amount) || 0), 0) * 100) / 100;
   const gstRate = settings.enableGst ? (settings.defaultGstRate || 0) : 0;
 
   // Split GST into SGST and CGST
   const halfRate = gstRate / 2;
-  const sgstAmount = settings.enableGst ? Math.round(subtotal * (halfRate / 100)) : 0;
-  const cgstAmount = settings.enableGst ? Math.round(subtotal * (halfRate / 100)) : 0;
+  const sgstAmount = settings.enableGst ? Math.round(subtotal * (halfRate / 100) * 100) / 100 : 0;
+  const cgstAmount = settings.enableGst ? Math.round(subtotal * (halfRate / 100) * 100) / 100 : 0;
 
-  const totalTax = sgstAmount + cgstAmount;
-  const grandTotal = subtotal + totalTax;
+  const totalTax = Math.round((sgstAmount + cgstAmount) * 100) / 100;
+  const grandTotal = Math.round((subtotal + totalTax) * 100) / 100;
+
+  // Sync paymentAmount with grandTotal if paymentType === 'full' and recordPayment is active
+  useEffect(() => {
+    if (recordPayment && paymentType === 'full') {
+      setPaymentAmount(grandTotal > 0 ? formatBillNum(grandTotal) : '');
+    }
+  }, [grandTotal, recordPayment, paymentType]);
+
+  // Dynamic payments for template preview
+  const currentPayments = React.useMemo(() => {
+    if (recordPayment) {
+      const amt = parseFloat(paymentAmount) || 0;
+      if (amt > 0) {
+        return [{
+          id: 'preview-payment',
+          amount: amt,
+          mode: paymentMode,
+          date: paymentDate || date,
+          note: paymentNote
+        }];
+      }
+    } else if (editingInvoice && editingInvoice.payments) {
+      return editingInvoice.payments;
+    }
+    return undefined;
+  }, [recordPayment, paymentAmount, paymentMode, paymentDate, date, paymentNote, editingInvoice]);
 
 
   const addItem = () => {
@@ -254,7 +336,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         quantity: finalQty,
         unit: unitToUse,
         rate: finalRate,
-        amount: finalQty * finalRate,
+        amount: Math.round(finalQty * finalRate * 100) / 100,
         packing: customPacking.trim() || undefined
       };
 
@@ -286,7 +368,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       newItems[existingIndex] = {
         ...existingItem,
         quantity: newQty,
-        amount: newQty * existingItem.rate
+        amount: Math.round(newQty * existingItem.rate * 100) / 100
       };
       setItems(newItems);
     } else {
@@ -297,7 +379,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         quantity: finalQty,
         unit: unitToUse,
         rate: finalRate,
-        amount: finalQty * finalRate,
+        amount: Math.round(finalQty * finalRate * 100) / 100,
         packing: packingToUse || undefined
       };
       setItems([...items, newItem]);
@@ -319,7 +401,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         return {
           ...item,
           quantity: newQty,
-          amount: newQty * item.rate
+          amount: Math.round(newQty * item.rate * 100) / 100
         };
       }
       return item;
@@ -336,8 +418,14 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     setSelectedCustomer(null);
     setCustomerName('');
     setCustomerCity('');
+    setCustomerMobile('');
     setIsSaved(false);
     setDate(new Date().toLocaleDateString('en-GB'));
+    setRecordPayment(false);
+    setPaymentType('full');
+    setPaymentAmount('');
+    setPaymentMode('Cash');
+    setPaymentNote('');
   };
 
   const handleCustomerSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -347,11 +435,13 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       setSelectedCustomer(null);
       setCustomerName('');
       setCustomerCity('');
+      setCustomerMobile('');
     } else {
       const match = allCustomerOptions.find(c => c.id === custId);
       if (match) {
         setCustomerName(match.name);
         setCustomerCity(match.city);
+        setCustomerMobile(match.phone || '');
         setShowSuggestions(false);
       }
     }
@@ -363,11 +453,29 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       return;
     }
 
+    let initialPayments: PaymentEntry[] | undefined = undefined;
+
+    if (recordPayment) {
+      const amt = parseFloat(paymentAmount) || 0;
+      if (amt > 0) {
+        initialPayments = [{
+          id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          amount: amt,
+          mode: paymentMode,
+          date: paymentDate || date,
+          note: paymentNote.trim() || (amt >= grandTotal - 0.01 ? 'Full payment received at bill creation' : 'Partial payment received at bill creation')
+        }];
+      }
+    } else if (editingInvoice && editingInvoice.payments) {
+      initialPayments = editingInvoice.payments;
+    }
+
     const invoice: Invoice = {
       id: billNo,
       date,
       customerName,
       customerCity,
+      customerMobile: customerMobile.trim() || undefined,
       items,
       total: grandTotal,
       // Save tax details
@@ -375,7 +483,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       gstAmount: totalTax,
       gstRate: gstRate,
       sgstAmount: sgstAmount,
-      cgstAmount: cgstAmount
+      cgstAmount: cgstAmount,
+      payments: initialPayments
     };
 
     try {
@@ -614,13 +723,18 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                     onClick={() => {
                       setCustomerName(s.name);
                       setCustomerCity(s.city);
+                      setCustomerMobile(s.phone || '');
                       setShowSuggestions(false);
                     }}
                     className="p-2.5 hover:bg-red-50 cursor-pointer flex items-center justify-between transition-colors"
                   >
                     <div>
                       <span className="font-bold text-slate-800 text-sm">{s.name}</span>
-                      {s.city && <span className="text-xs text-slate-500 ml-2">({s.city})</span>}
+                      {(s.city || s.phone) && (
+                        <span className="text-xs text-slate-500 ml-2">
+                          ({[s.city, s.phone].filter(Boolean).join(', ')})
+                        </span>
+                      )}
                     </div>
                     {s.isFromInvoice ? (
                       <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">Past Invoice</span>
@@ -633,17 +747,30 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             )}
           </div>
 
-          <input
-            type="text"
-            placeholder="City"
-            value={customerCity}
-            onChange={(e) => {
-              setCustomerCity(e.target.value);
-              setIsSaved(false);
-            }}
-            disabled={isSaved}
-            className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500"
-          />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="text"
+              placeholder="City"
+              value={customerCity}
+              onChange={(e) => {
+                setCustomerCity(e.target.value);
+                setIsSaved(false);
+              }}
+              disabled={isSaved}
+              className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+            />
+            <input
+              type="text"
+              placeholder="Mobile / Phone No."
+              value={customerMobile}
+              onChange={(e) => {
+                setCustomerMobile(e.target.value);
+                setIsSaved(false);
+              }}
+              disabled={isSaved}
+              className="w-full p-2 border border-slate-300 rounded outline-none focus:border-red-500 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+            />
+          </div>
         </div>
 
         {/* Add Items */}
@@ -792,7 +919,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                       {idx + 1}. {item.name} <span className="text-slate-400 font-normal text-xs">{item.packing ? `(${item.packing})` : ''}</span>
                     </div>
                     <div className="text-slate-500 text-xs font-medium">
-                      Rate: ₹{item.rate} | {item.unit}
+                      Rate: ₹{formatBillNum(item.rate)} | {item.unit}
                     </div>
                   </div>
                   <button
@@ -815,7 +942,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                       <Minus className="w-3 h-3" />
                     </button>
                     <div className="w-10 text-center font-bold text-slate-700 text-sm">
-                      {item.quantity}
+                      {formatBillQty(item.quantity)}
                     </div>
                     <button
                       onClick={() => updateItemQty(item.id, 1)}
@@ -826,7 +953,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                     </button>
                   </div>
                   <div className="text-sm font-bold text-slate-900">
-                    ₹{item.amount}
+                    ₹{formatBillNum(item.amount)}
                   </div>
                 </div>
               </div>
@@ -841,22 +968,187 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                 <>
                   <div className="flex justify-between text-sm text-slate-600 mb-1">
                     <span>Subtotal:</span>
-                    <span>₹{subtotal}</span>
+                    <span>₹{formatBillNum(subtotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-slate-600 mb-1">
                     <span>CGST ({halfRate}%):</span>
-                    <span>₹{cgstAmount}</span>
+                    <span>₹{formatBillNum(cgstAmount)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
                     <span>SGST ({halfRate}%):</span>
-                    <span>₹{sgstAmount}</span>
+                    <span>₹{formatBillNum(sgstAmount)}</span>
                   </div>
                 </>
               )}
               <div className="flex justify-between font-bold text-lg text-slate-900 mt-1">
                 <span>Total:</span>
-                <span>₹{grandTotal}</span>
+                <span>₹{formatBillNum(grandTotal)}</span>
               </div>
+            </div>
+          )}
+
+          {/* Payment / Billing Option at Invoice Creation */}
+          {enablePaymentTracking && items.length > 0 && (
+            <div className="mt-4 p-3.5 bg-gradient-to-br from-slate-50 to-indigo-50/40 rounded-xl border border-indigo-100 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={recordPayment}
+                    onChange={(e) => {
+                      setRecordPayment(e.target.checked);
+                      setIsSaved(false);
+                      if (e.target.checked && !paymentAmount) {
+                        setPaymentAmount(formatBillNum(grandTotal));
+                      }
+                    }}
+                    disabled={isSaved}
+                    className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span className="font-bold text-xs uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-indigo-600" />
+                    Collect Payment Now
+                  </span>
+                </label>
+                {recordPayment && (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    {paymentType === 'full' && parseFloat(paymentAmount) >= grandTotal ? 'Marked Paid' : 'Partial'}
+                  </span>
+                )}
+              </div>
+
+              {recordPayment && (
+                <div className="space-y-3 pt-2.5 border-t border-indigo-100/70">
+                  {/* Payment Type Selection */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentType('full');
+                        setPaymentAmount(formatBillNum(grandTotal));
+                        setIsSaved(false);
+                      }}
+                      disabled={isSaved}
+                      className={`py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                        paymentType === 'full'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Full Payment (₹{formatBillNum(grandTotal)})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentType('partial');
+                        setIsSaved(false);
+                      }}
+                      disabled={isSaved}
+                      className={`py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                        paymentType === 'partial'
+                          ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      Partial Payment
+                    </button>
+                  </div>
+
+                  {/* Mode & Amount Inputs */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Mode</label>
+                      <select
+                        value={paymentMode}
+                        onChange={(e) => {
+                          setPaymentMode(e.target.value as PaymentMode);
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:border-indigo-500 outline-none font-medium"
+                      >
+                        <option value="Cash">Cash 💵</option>
+                        <option value="UPI">UPI / QR 📱</option>
+                        <option value="Bank Transfer">Bank Transfer 🏦</option>
+                        <option value="Cheque">Cheque 📝</option>
+                        <option value="Other">Other 💳</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Amount Paid (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        max={grandTotal}
+                        value={paymentAmount}
+                        onChange={(e) => {
+                          setPaymentAmount(e.target.value);
+                          if (paymentType === 'full' && parseFloat(e.target.value) !== grandTotal) {
+                            setPaymentType('partial');
+                          }
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        placeholder="0.00"
+                        className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 bg-white focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Date & Note Inputs */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Date</label>
+                      <input
+                        type="text"
+                        value={paymentDate}
+                        onChange={(e) => {
+                          setPaymentDate(e.target.value);
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        placeholder="DD/MM/YYYY"
+                        className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Note (Optional)</label>
+                      <input
+                        type="text"
+                        value={paymentNote}
+                        onChange={(e) => {
+                          setPaymentNote(e.target.value);
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        placeholder="e.g. GPay / Cash received"
+                        className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Summary row */}
+                  {(() => {
+                    const amt = parseFloat(paymentAmount) || 0;
+                    const bal = Math.max(0, grandTotal - amt);
+                    return (
+                      <div className="flex justify-between items-center text-xs p-2 bg-white/90 rounded-lg border border-indigo-100 font-medium">
+                        <span className="text-slate-600">
+                          Paid: <strong className="text-emerald-700">₹{amt}</strong> ({paymentMode})
+                        </span>
+                        <span className={bal > 0 ? 'text-amber-700 font-bold' : 'text-emerald-700 font-bold'}>
+                          {bal > 0 ? `Due: ₹${bal}` : 'Fully Paid ✓'}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -903,8 +1195,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             date={date}
             customerName={customerName}
             customerCity={customerCity}
+            customerMobile={customerMobile}
             items={items}
             settings={settings}
+            payments={currentPayments}
           />
         </div>
       </div>
@@ -918,8 +1212,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             date={date}
             customerName={customerName}
             customerCity={customerCity}
+            customerMobile={customerMobile}
             items={items}
             settings={settings}
+            payments={currentPayments}
           />
         </div>
       </div>

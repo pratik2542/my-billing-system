@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Invoice, Product, Customer } from '../types';
+import { Invoice, Product, Customer, BusinessSettings } from '../types';
 import { CustomerSpendingModal } from './CustomerSpendingModal';
 import { ProductAnalysisModal } from './ProductAnalysisModal';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -17,13 +17,27 @@ import {
   Calendar,
   Target,
   Package,
-  Search
+  Search,
+  ShieldCheck,
+  CheckCircle2,
+  Clock,
+  MessageSquare,
+  Phone,
+  ArrowRight,
+  ChevronRight,
+  X,
+  CreditCard,
+  Building2,
+  Smartphone,
+  Banknote,
+  FileText
 } from 'lucide-react';
 
 interface AnalyticsDashboardProps {
   invoices: Invoice[];
   products: Product[];
   customers: Customer[];
+  settings?: BusinessSettings;
   onAiRequest?: () => void;
   enablePaymentTracking?: boolean;
 }
@@ -235,20 +249,33 @@ const normalizeUnitName = (rawUnit?: string, packing?: string): string => {
   return (rawUnit || u).trim().charAt(0).toUpperCase() + (rawUnit || u).trim().slice(1);
 };
 
-const formatVolumeSummary = (unitsMap?: Record<string, number>): { text: string; dominantUnit: string; totalQty: number } => {
-  if (!unitsMap) return { text: '', dominantUnit: 'Pcs', totalQty: 0 };
+const formatVolumeSummary = (unitsMap?: Record<string, number>): {
+  text: string;
+  dominantUnit: string;
+  dominantQty: number;
+  totalQty: number;
+  secondaryText?: string;
+  entries: [string, number][];
+} => {
+  if (!unitsMap) return { text: '', dominantUnit: 'Pcs', dominantQty: 0, totalQty: 0, entries: [] };
   const entries = Object.entries(unitsMap).filter(([_, qty]) => qty > 0);
-  if (entries.length === 0) return { text: '', dominantUnit: 'Pcs', totalQty: 0 };
+  if (entries.length === 0) return { text: '', dominantUnit: 'Pcs', dominantQty: 0, totalQty: 0, entries: [] };
 
   entries.sort((a, b) => b[1] - a[1]);
   const dominantUnit = entries[0][0];
+  const dominantQty = entries[0][1];
   const totalQty = entries.reduce((sum, [_, q]) => sum + q, 0);
 
   const text = entries
     .map(([unit, qty]) => `${qty % 1 === 0 ? qty.toLocaleString('en-IN') : qty.toFixed(1)} ${unit}`)
     .join(' + ');
 
-  return { text, dominantUnit, totalQty };
+  const otherEntries = entries.slice(1);
+  const secondaryText = otherEntries.length > 0
+    ? `+ ${otherEntries.map(([unit, qty]) => `${qty % 1 === 0 ? qty.toLocaleString('en-IN') : qty.toFixed(1)} ${unit}`).join(', ')}`
+    : undefined;
+
+  return { text, dominantUnit, dominantQty, totalQty, secondaryText, entries };
 };
 
 const getVolumeIcon = (unit: string) => {
@@ -525,9 +552,9 @@ const SimplePieChart = ({
   const activeItem = hoveredIdx !== null ? slices[hoveredIdx] : null;
 
   return (
-    <div className="w-full flex flex-col md:flex-row items-start md:items-center justify-center gap-3 md:gap-8 py-1 select-none">
-      {/* Pie SVG */}
-      <div className={`${showLegend ? 'w-32 h-32 md:w-44 md:h-44' : 'w-24 h-24 sm:w-28 sm:h-28'} relative flex items-center justify-center flex-shrink-0`}>
+    <div className="w-full flex flex-col items-center justify-center gap-2 py-1 select-none">
+      {/* Pie SVG - Perfectly Centered */}
+      <div className={`${showLegend ? 'w-32 h-32 sm:w-36 sm:h-36' : 'w-24 h-24 sm:w-28 sm:h-28'} relative flex items-center justify-center flex-shrink-0 mx-auto`}>
         <svg viewBox="0 0 200 200" className="w-full h-full overflow-visible">
           {slices.map((slice) => {
             if (slice.end - slice.start < 0.1) return null;
@@ -581,10 +608,10 @@ const SimplePieChart = ({
         </svg>
       </div>
 
-      {/* Legend */}
+      {/* Legend - Centered Flex */}
       {showLegend && (
-        <div className="w-full md:w-auto px-2 md:px-4">
-          <div className="grid grid-cols-2 md:grid-cols-1 gap-x-3 gap-y-2 md:gap-2 w-full md:w-auto max-h-60 overflow-y-auto pr-1.5 scrollbar-thin">
+        <div className="w-full flex justify-center px-1">
+          <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-lg w-full">
             {slices.map((d) => {
               const isHovered = hoveredIdx === d.index;
               const displayVol = d.unitLabel || (d.weight ? `${d.weight} Units` : '');
@@ -594,20 +621,18 @@ const SimplePieChart = ({
                   key={d.index}
                   onMouseEnter={() => setHoveredIdx(d.index)}
                   onMouseLeave={() => setHoveredIdx(null)}
-                  className={`flex items-center gap-2 text-[10px] md:text-xs p-1.5 rounded-lg cursor-pointer transition-colors ${
-                    isHovered ? 'bg-slate-100 ring-1 ring-slate-200' : 'hover:bg-slate-50'
+                  className={`flex items-center gap-1.5 text-[11px] py-0.5 px-2 rounded-md cursor-pointer transition-colors ${
+                    isHovered ? 'bg-slate-100 ring-1 ring-slate-300' : 'bg-slate-50 hover:bg-slate-100 border border-slate-200/60'
                   }`}
                 >
-                  <div className="w-2.5 md:w-3 h-2.5 md:h-3 rounded-full flex-shrink-0 shadow-xs" style={{ background: d.color }}></div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="text-slate-700 font-bold truncate" title={d.name}>{d.name}</span>
-                    <span className="text-slate-500 font-semibold break-all">
-                      {formatINRFull(d.value)} <span className="text-[9px] text-slate-400 font-normal">({d.pct}%)</span>
-                    </span>
-                    {showWeight && displayVol && (
-                      <span className="text-slate-500 font-medium text-[9px] md:text-[10px]">{displayVol}</span>
-                    )}
-                  </div>
+                  <div className="w-2 h-2 rounded-full flex-shrink-0 shadow-xs" style={{ background: d.color }}></div>
+                  <span className="text-slate-700 font-bold truncate max-w-[120px]" title={d.name}>{d.name}</span>
+                  <span className="text-slate-500 font-semibold">
+                    {formatINRFull(d.value)} <span className="text-[10px] text-slate-400 font-normal">({d.pct}%)</span>
+                  </span>
+                  {showWeight && displayVol && (
+                    <span className="text-slate-400 text-[10px]">({displayVol})</span>
+                  )}
                 </div>
               );
             })}
@@ -618,26 +643,40 @@ const SimplePieChart = ({
   );
 };
 // Metric Card Component for Visual Stats
-const MetricCard = ({ icon, title, value, subtitle, trend, color }: {
+const MetricCard = ({ icon, title, value, subtitle, trend, color, onClick, clickableHint }: {
   icon: React.ReactNode,
   title: string,
   value: string | number,
   subtitle?: string,
   trend?: 'up' | 'down' | 'neutral',
-  color: string
+  color: string,
+  onClick?: () => void,
+  clickableHint?: string
 }) => (
-  <div className={`bg-gradient-to-br ${color} p-4 rounded-xl shadow-md border border-white/20`}>
+  <div
+    onClick={onClick}
+    className={`bg-gradient-to-br ${color} p-4 rounded-xl shadow-md border border-white/20 transition-all duration-200 ${
+      onClick ? 'cursor-pointer hover:shadow-lg hover:scale-[1.02] active:scale-[0.99] group select-none' : ''
+    }`}
+  >
     <div className="flex items-start justify-between mb-2">
       <div className="p-2 bg-white/20 rounded-lg">
         {icon}
       </div>
-      {trend && (
-        <div className={`flex items-center gap-1 text-xs font-bold ${trend === 'up' ? 'text-green-300' : trend === 'down' ? 'text-red-300' : 'text-white/70'
-          }`}>
-          {trend === 'up' && <TrendingUp size={14} />}
-          {trend === 'down' && <TrendingDown size={14} />}
-        </div>
-      )}
+      <div className="flex items-center gap-1.5">
+        {clickableHint && (
+          <span className="text-[10px] bg-white/20 text-white font-semibold px-2 py-0.5 rounded-full opacity-90 group-hover:opacity-100 flex items-center gap-0.5">
+            {clickableHint} <ChevronRight size={10} />
+          </span>
+        )}
+        {trend && (
+          <div className={`flex items-center gap-1 text-xs font-bold ${trend === 'up' ? 'text-green-300' : trend === 'down' ? 'text-red-300' : 'text-white/70'
+            }`}>
+            {trend === 'up' && <TrendingUp size={14} />}
+            {trend === 'down' && <TrendingDown size={14} />}
+          </div>
+        )}
+      </div>
     </div>
     <div className="text-2xl md:text-3xl font-bold text-white mb-1">{value}</div>
     <div className="text-xs font-medium text-white/90">{title}</div>
@@ -682,7 +721,565 @@ const ProgressBar = ({
     </div>
   );
 };
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices, products, customers, onAiRequest, enablePaymentTracking = true }) => {
+// Helper for WhatsApp payment reminders
+const sendWhatsAppPaymentReminder = (
+  customerName: string,
+  phone: string,
+  totalOwed: number,
+  invoices: Array<{ id?: string; invoiceId?: string; total: number; paid: number; owed: number; date: string }>,
+  settings?: BusinessSettings
+) => {
+  if (!phone) {
+    alert(`No mobile number recorded for ${customerName}.`);
+    return;
+  }
+  const cleanPhone = phone.replace(/[^0-9]/g, '');
+  const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+
+  let msg = `*PAYMENT REMINDER*\n`;
+  msg += `Dear *${customerName}*,\n\n`;
+  msg += `This is a reminder regarding your pending balance from *${settings?.name || 'our business'}*.\n\n`;
+  msg += `• *Total Outstanding Balance:* *₹${Math.round(totalOwed).toLocaleString('en-IN')}*\n`;
+
+  if (invoices.length === 1) {
+    const inv = invoices[0];
+    msg += `• *Invoice #:* ${inv.id || inv.invoiceId}\n`;
+    msg += `• *Date:* ${inv.date}\n`;
+    msg += `• *Bill Amount:* ₹${Math.round(inv.total).toLocaleString('en-IN')}\n`;
+    msg += `• *Amount Paid:* ₹${Math.round(inv.paid).toLocaleString('en-IN')}\n`;
+    msg += `• *Balance Due:* *₹${Math.round(inv.owed).toLocaleString('en-IN')}*\n`;
+  } else {
+    msg += `• *Pending Invoices (${invoices.length}):*\n`;
+    invoices.slice(0, 5).forEach((inv) => {
+      msg += `  - Bill #${inv.id || inv.invoiceId} (${inv.date}): Due *₹${Math.round(inv.owed).toLocaleString('en-IN')}*\n`;
+    });
+    if (invoices.length > 5) {
+      msg += `  ...and ${invoices.length - 5} more invoice(s)\n`;
+    }
+  }
+
+  if (settings?.upiId) {
+    msg += `\n📲 *Pay via UPI:* \`${settings.upiId}\`\n`;
+  }
+  if (settings?.bankName && settings?.bankAccountNumber) {
+    msg += `🏦 *Bank Details:*\n`;
+    msg += `• Bank: ${settings.bankName}\n`;
+    msg += `• A/C: ${settings.bankAccountNumber}\n`;
+    if (settings?.bankIfsc) msg += `• IFSC: ${settings.bankIfsc}\n`;
+  }
+
+  msg += `\nPlease clear the pending amount at your earliest convenience. Thank you! 🙏`;
+
+  window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+};
+
+// Sub-Tab 1: Outstanding Debtors Tab
+const OutstandingDebtorsTab: React.FC<{
+  outstandingInvoices: Array<{
+    invoiceId: string;
+    date: string;
+    customerName: string;
+    customerMobile: string;
+    customerCity: string;
+    total: number;
+    paid: number;
+    owed: number;
+    ageDays: number;
+    agingBucket: 'current' | 'days30' | 'days60' | 'days90Plus';
+  }>;
+  allOverdueCustomers: Array<{
+    customerName: string;
+    customerMobile: string;
+    customerCity: string;
+    totalBilled: number;
+    totalPaid: number;
+    totalOwed: number;
+    unpaidBills: number;
+    invoices: Array<{ id: string; date: string; total: number; paid: number; owed: number }>;
+  }>;
+  selectedAging?: 'all' | 'current' | 'days30' | 'days60' | 'days90Plus';
+  selectedCustomerName?: string;
+  onClearCustomer: () => void;
+  onSelectAging: (aging: 'all' | 'current' | 'days30' | 'days60' | 'days90Plus') => void;
+  settings?: BusinessSettings;
+}> = ({
+  outstandingInvoices,
+  allOverdueCustomers,
+  selectedAging = 'all',
+  selectedCustomerName,
+  onClearCustomer,
+  onSelectAging,
+  settings
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeAging, setActiveAging] = useState<'all' | 'current' | 'days30' | 'days60' | 'days90Plus'>(selectedAging || 'all');
+
+  const filtered = useMemo(() => {
+    const clean = searchTerm.trim().toLowerCase();
+    const digits = searchTerm.replace(/[^0-9]/g, '');
+
+    return outstandingInvoices.filter(inv => {
+      if (selectedCustomerName && inv.customerName.toLowerCase() !== selectedCustomerName.toLowerCase()) {
+        return false;
+      }
+      if (activeAging !== 'all' && inv.agingBucket !== activeAging) {
+        return false;
+      }
+      if (clean) {
+        const nameMatch = inv.customerName?.toLowerCase().includes(clean);
+        const cityMatch = inv.customerCity?.toLowerCase().includes(clean);
+        const idMatch = inv.invoiceId?.toLowerCase().includes(clean);
+        const phoneMatch = digits && inv.customerMobile ? inv.customerMobile.replace(/[^0-9]/g, '').includes(digits) : false;
+        if (!nameMatch && !cityMatch && !idMatch && !phoneMatch) return false;
+      }
+      return true;
+    });
+  }, [outstandingInvoices, selectedCustomerName, activeAging, searchTerm]);
+
+  const totalFilteredDue = filtered.reduce((s, i) => s + i.owed, 0);
+
+  return (
+    <div className="space-y-3">
+      {/* Selected Customer Filter Notice */}
+      {selectedCustomerName && (
+        <div className="bg-indigo-50 border border-indigo-200 p-2.5 rounded-xl flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-indigo-900">Filtered by Customer:</span>
+            <span className="bg-indigo-600 text-white font-bold px-2 py-0.5 rounded-md">{selectedCustomerName}</span>
+          </div>
+          <button
+            onClick={onClearCustomer}
+            className="text-indigo-700 hover:text-indigo-900 font-bold underline cursor-pointer"
+          >
+            Show All Customers
+          </button>
+        </div>
+      )}
+
+      {/* Toolbar: Search + Aging Pills */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+        <div className="relative flex-1 max-w-full sm:max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Search debtor, phone, bill #..."
+            className="w-full pl-8 pr-3 py-2 sm:py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:outline-none"
+          />
+        </div>
+
+        {/* Aging Filter Pills - horizontal scroll on mobile */}
+        <div className="overflow-x-auto no-scrollbar scrollbar-none flex bg-white p-0.5 rounded-lg border border-slate-200 text-xs shrink-0 gap-0.5">
+          {[
+            { key: 'all' as const, label: 'All Outstanding' },
+            { key: 'current' as const, label: '0-30 Days' },
+            { key: 'days30' as const, label: '31-60 Days' },
+            { key: 'days60' as const, label: '61-90 Days' },
+            { key: 'days90Plus' as const, label: '90+ Days' },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => {
+                setActiveAging(tab.key);
+                onSelectAging(tab.key);
+              }}
+              className={`px-2 sm:px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                activeAging === tab.key
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary Header */}
+      <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+        <span>Showing <strong className="text-slate-800">{filtered.length}</strong> debtor bills</span>
+        <span>Total Due: <strong className="text-rose-600 font-extrabold">{formatINRFull(totalFilteredDue)}</strong></span>
+      </div>
+
+      {/* Debtors List */}
+      <div className="space-y-2.5 max-h-[55vh] overflow-y-auto pr-1">
+        {filtered.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
+            <CheckCircle2 className="w-8 h-8 mx-auto mb-1 text-emerald-500 opacity-60" />
+            <p className="text-sm font-semibold text-slate-700">No pending balances found in this filter</p>
+          </div>
+        ) : (
+          filtered.map(inv => {
+            const paidPct = inv.total > 0 ? (inv.paid / inv.total) * 100 : 0;
+            const owedPct = 100 - paidPct;
+
+            const agingBadge =
+              inv.agingBucket === 'current'
+                ? { label: `${inv.ageDays}d old (0-30d)`, color: 'bg-emerald-100 text-emerald-800 border-emerald-200' }
+                : inv.agingBucket === 'days30'
+                ? { label: `${inv.ageDays}d old (31-60d)`, color: 'bg-yellow-100 text-yellow-800 border-yellow-200' }
+                : inv.agingBucket === 'days60'
+                ? { label: `${inv.ageDays}d old (61-90d)`, color: 'bg-orange-100 text-orange-800 border-orange-200' }
+                : { label: `${inv.ageDays}d old (90+d Risk)`, color: 'bg-rose-100 text-rose-800 border-rose-200 font-extrabold' };
+
+            return (
+              <div
+                key={inv.invoiceId}
+                className="bg-white p-4 sm:p-4.5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md hover:border-rose-300 transition-all flex flex-col md:flex-row md:items-center justify-between gap-3.5 group"
+              >
+                {/* Left: Avatar + Customer & Invoice Details */}
+                <div className="flex items-start gap-3 min-w-0 flex-1">
+                  {/* Avatar Initial */}
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-red-600 text-white font-black text-base flex items-center justify-center shadow-xs shrink-0 uppercase">
+                    {inv.customerName.charAt(0) || 'C'}
+                  </div>
+
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-slate-900 text-sm sm:text-base">#{inv.invoiceId}</span>
+                      <span className="text-xs text-slate-400">({inv.date})</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${agingBadge.color}`}>
+                        {agingBadge.label}
+                      </span>
+                    </div>
+
+                    <div className="text-xs sm:text-sm font-semibold text-slate-800 flex items-center gap-2 flex-wrap">
+                      <span className="truncate">{inv.customerName}</span>
+                      {inv.customerCity && (
+                        <span className="bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full text-xs border border-slate-200">
+                          📍 {inv.customerCity}
+                        </span>
+                      )}
+                      {inv.customerMobile && (
+                        <span className="text-slate-500 font-medium text-xs flex items-center gap-0.5 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">
+                          📞 {inv.customerMobile}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="mt-1.5 flex items-center gap-2 max-w-full sm:max-w-xs">
+                      <div className="flex-1 bg-slate-200 h-1.5 rounded-full overflow-hidden flex">
+                        {paidPct > 0 && (
+                          <div className="bg-emerald-500 h-full" style={{ width: `${paidPct}%` }} />
+                        )}
+                        {owedPct > 0 && (
+                          <div className="bg-rose-500 h-full" style={{ width: `${owedPct}%` }} />
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 shrink-0 font-medium whitespace-nowrap">
+                        Paid: {formatINRFull(inv.paid)} / {formatINRFull(inv.total)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Outstanding Amount & WhatsApp Button */}
+                <div className="flex items-center justify-between md:flex-row md:items-center gap-3 pt-2.5 md:pt-0 border-t md:border-t-0 border-slate-100 shrink-0">
+                  {/* Balance Box */}
+                  <div className="bg-gradient-to-br from-rose-50 to-orange-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl text-left md:text-right min-w-[130px]">
+                    <div className="text-[10px] uppercase font-extrabold text-rose-500 tracking-wider">Balance Due</div>
+                    <div className="text-base sm:text-lg font-black text-rose-600">{formatINRFull(inv.owed)}</div>
+                    <div className="text-[10px] text-slate-400 font-medium">Billed: {formatINRFull(inv.total)}</div>
+                  </div>
+
+                  {inv.customerMobile ? (
+                    <button
+                      onClick={() =>
+                        sendWhatsAppPaymentReminder(
+                          inv.customerName,
+                          inv.customerMobile,
+                          inv.owed,
+                          [{ id: inv.invoiceId, date: inv.date, total: inv.total, paid: inv.paid, owed: inv.owed }],
+                          settings
+                        )
+                      }
+                      className="px-3.5 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98] shrink-0"
+                      title="Send WhatsApp Reminder to Customer"
+                    >
+                      <MessageSquare size={14} />
+                      <span>WhatsApp</span>
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 italic">No mobile</span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Sub-Tab 2: Collected Payments Tab
+const CollectedPaymentsTab: React.FC<{
+  collectedTransactions: Array<{
+    invoiceId: string;
+    date: string;
+    customerName: string;
+    customerMobile: string;
+    customerCity: string;
+    amount: number;
+    mode: string;
+    note?: string;
+  }>;
+  settings?: BusinessSettings;
+}> = ({ collectedTransactions }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [modeFilter, setModeFilter] = useState<string>('all');
+
+  const filtered = useMemo(() => {
+    const clean = searchTerm.trim().toLowerCase();
+    return collectedTransactions.filter(item => {
+      if (modeFilter !== 'all' && item.mode !== modeFilter) return false;
+      if (clean) {
+        const nameMatch = item.customerName?.toLowerCase().includes(clean);
+        const invMatch = item.invoiceId?.toLowerCase().includes(clean);
+        const noteMatch = item.note?.toLowerCase().includes(clean);
+        if (!nameMatch && !invMatch && !noteMatch) return false;
+      }
+      return true;
+    });
+  }, [collectedTransactions, modeFilter, searchTerm]);
+
+  const totalFiltered = filtered.reduce((s, i) => s + i.amount, 0);
+
+  return (
+    <div className="space-y-3">
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Search payer, bill #, note..."
+            className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+          />
+        </div>
+
+        <select
+          value={modeFilter}
+          onChange={e => setModeFilter(e.target.value)}
+          className="bg-white px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none"
+        >
+          <option value="all">All Modes</option>
+          <option value="Cash">Cash</option>
+          <option value="UPI">UPI</option>
+          <option value="Cheque">Cheque</option>
+          <option value="Bank Transfer">Bank Transfer</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+        <span>Showing <strong className="text-slate-800">{filtered.length}</strong> collection receipts</span>
+        <span>Total Collected: <strong className="text-emerald-700 font-extrabold">{formatINRFull(totalFiltered)}</strong></span>
+      </div>
+
+      <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+        {filtered.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
+            <Wallet className="w-8 h-8 mx-auto mb-1 opacity-40" />
+            <p className="text-sm font-semibold text-slate-700">No payment receipts recorded in this filter</p>
+          </div>
+        ) : (
+          filtered.map((item, idx) => (
+            <div
+              key={idx}
+              className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-xs font-bold text-slate-800">📅 {item.date}</span>
+                  <span className="text-xs font-bold text-indigo-600">#{item.invoiceId}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    {item.mode}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-700 font-medium truncate">
+                  {item.customerName}
+                  {item.customerCity && <span className="text-slate-400 ml-1">({item.customerCity})</span>}
+                  {item.customerMobile && <span className="text-slate-400 ml-1.5">📞 {item.customerMobile}</span>}
+                </div>
+                {item.note && <div className="text-[11px] text-slate-400 mt-0.5 italic truncate">Note: {item.note}</div>}
+              </div>
+
+              <div className="text-right shrink-0">
+                <div className="text-sm sm:text-base font-black text-emerald-700">{formatINRFull(item.amount)}</div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Sub-Tab 3: Aging Analysis Tab
+const AgingAnalysisTab: React.FC<{
+  aging: { current: number; days30: number; days60: number; days90Plus: number };
+  agingItems: {
+    current: Array<any>;
+    days30: Array<any>;
+    days60: Array<any>;
+    days90Plus: Array<any>;
+  };
+  onSelectAging: (aging: 'all' | 'current' | 'days30' | 'days60' | 'days90Plus') => void;
+  settings?: BusinessSettings;
+}> = ({ aging, agingItems, onSelectAging }) => {
+  const totalAging = aging.current + aging.days30 + aging.days60 + aging.days90Plus;
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <h4 className="text-sm font-bold text-slate-800 mb-1">Accounts Receivable Aging Overview</h4>
+        <p className="text-xs text-slate-500 mb-4">Click any bucket to inspect the exact bills and debtors</p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* 0-30 */}
+          <div
+            onClick={() => onSelectAging('current')}
+            className="p-4 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none"
+          >
+            <div className="flex items-center justify-between text-xs font-bold text-emerald-800">
+              <span>0-30 Days (Current)</span>
+              <span className="bg-white px-2 py-0.5 rounded-full shadow-xs text-xs">{agingItems.current.length} bills</span>
+            </div>
+            <div className="text-xl font-black text-emerald-900 mt-1">{formatINRFull(aging.current)}</div>
+            <div className="text-xs text-emerald-700 mt-1">
+              {totalAging > 0 ? ((aging.current / totalAging) * 100).toFixed(1) : 0}% of total debt • Click to inspect →
+            </div>
+          </div>
+
+          {/* 31-60 */}
+          <div
+            onClick={() => onSelectAging('days30')}
+            className="p-4 bg-yellow-50 hover:bg-yellow-100/80 border border-yellow-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none"
+          >
+            <div className="flex items-center justify-between text-xs font-bold text-yellow-800">
+              <span>31-60 Days (Follow-up)</span>
+              <span className="bg-white px-2 py-0.5 rounded-full shadow-xs text-xs">{agingItems.days30.length} bills</span>
+            </div>
+            <div className="text-xl font-black text-yellow-900 mt-1">{formatINRFull(aging.days30)}</div>
+            <div className="text-xs text-yellow-800 mt-1">
+              {totalAging > 0 ? ((aging.days30 / totalAging) * 100).toFixed(1) : 0}% of total debt • Click to inspect →
+            </div>
+          </div>
+
+          {/* 61-90 */}
+          <div
+            onClick={() => onSelectAging('days60')}
+            className="p-4 bg-orange-50 hover:bg-orange-100/80 border border-orange-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none"
+          >
+            <div className="flex items-center justify-between text-xs font-bold text-orange-800">
+              <span>61-90 Days (Overdue)</span>
+              <span className="bg-white px-2 py-0.5 rounded-full shadow-xs text-xs">{agingItems.days60.length} bills</span>
+            </div>
+            <div className="text-xl font-black text-orange-900 mt-1">{formatINRFull(aging.days60)}</div>
+            <div className="text-xs text-orange-800 mt-1">
+              {totalAging > 0 ? ((aging.days60 / totalAging) * 100).toFixed(1) : 0}% of total debt • Click to inspect →
+            </div>
+          </div>
+
+          {/* 90+ */}
+          <div
+            onClick={() => onSelectAging('days90Plus')}
+            className="p-4 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none"
+          >
+            <div className="flex items-center justify-between text-xs font-bold text-rose-800">
+              <span>90+ Days (High Risk)</span>
+              <span className="bg-white px-2 py-0.5 rounded-full shadow-xs text-xs font-bold text-rose-700">{agingItems.days90Plus.length} bills</span>
+            </div>
+            <div className="text-xl font-black text-rose-900 mt-1">{formatINRFull(aging.days90Plus)}</div>
+            <div className="text-xs text-rose-800 mt-1 font-bold">
+              {totalAging > 0 ? ((aging.days90Plus / totalAging) * 100).toFixed(1) : 0}% of total debt • Urgent collection →
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Sub-Tab 4: Payment Modes Tab
+const PaymentModesTab: React.FC<{
+  modeTotals: Record<string, { amount: number; count: number }>;
+  collectedTransactions: Array<any>;
+  selectedMode?: string;
+  onSelectMode: (mode: string) => void;
+}> = ({ modeTotals, collectedTransactions, selectedMode = 'all', onSelectMode }) => {
+  const modeEntries = Object.entries(modeTotals) as Array<[string, { amount: number; count: number }]>;
+  const total = (Object.values(modeTotals) as Array<{ amount: number; count: number }>).reduce((s, m) => s + m.amount, 0);
+
+  const transactions = useMemo(() => {
+    if (selectedMode === 'all') return collectedTransactions;
+    return collectedTransactions.filter(t => t.mode === selectedMode);
+  }, [collectedTransactions, selectedMode]);
+
+  return (
+    <div className="space-y-4">
+      {/* Mode Distribution Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+        {modeEntries.map(([mode, d]) => (
+          <div
+            key={mode}
+            onClick={() => onSelectMode(selectedMode === mode ? 'all' : mode)}
+            className={`p-3 rounded-xl border cursor-pointer transition-all select-none ${
+              selectedMode === mode
+                ? 'bg-indigo-600 text-white border-indigo-700 shadow-md ring-2 ring-indigo-300'
+                : 'bg-white hover:bg-slate-50 border-slate-200'
+            }`}
+          >
+            <div className={`text-[11px] font-bold ${selectedMode === mode ? 'text-indigo-100' : 'text-slate-500'}`}>
+              {mode}
+            </div>
+            <div className={`text-sm sm:text-base font-black mt-0.5 ${selectedMode === mode ? 'text-white' : 'text-slate-900'}`}>
+              {formatINRFull(d.amount)}
+            </div>
+            <div className={`text-[10px] mt-0.5 ${selectedMode === mode ? 'text-indigo-200' : 'text-slate-400'}`}>
+              {d.count} txns ({total > 0 ? ((d.amount / total) * 100).toFixed(0) : 0}%)
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Transactions for selected mode */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+          {selectedMode === 'all' ? 'All Payment Receipts' : `${selectedMode} Transactions`} ({transactions.length})
+        </h4>
+
+        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          {transactions.map((t, idx) => (
+            <div key={idx} className="p-2.5 bg-slate-50 rounded-lg flex items-center justify-between text-xs">
+              <div>
+                <span className="font-bold text-slate-800">📅 {t.date}</span>
+                <span className="font-bold text-indigo-600 ml-2">#{t.invoiceId}</span>
+                <span className="text-slate-700 ml-2 font-medium">{t.customerName}</span>
+                {t.note && <span className="text-slate-400 ml-2 italic">({t.note})</span>}
+              </div>
+              <div className="font-black text-emerald-700">{formatINRFull(t.amount)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices, products, customers, settings, onAiRequest, enablePaymentTracking = true }) => {
+  const visibility = settings?.analyticsVisibility || {
+    showProductAnalysis: true,
+    showCustomerAnalysis: true,
+    showCustomerPurchaseDetails: true,
+    showAiBusinessAnalyst: true,
+  };
+
   // State for global filters
   const [timeFilter, setTimeFilter] = useState<string>('month');
   const [customStart, setCustomStart] = useState<string>('');
@@ -690,6 +1287,22 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<Customer | null>(null);
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
   const [cachedPrediction, setCachedPrediction] = useState<AIAnalysisResult | null>(null);
+
+  // State for interactive Payment Analytics Detail Modal
+  const [paymentDetailModal, setPaymentDetailModal] = useState<{
+    isOpen: boolean;
+    activeTab: 'outstanding' | 'collected' | 'aging' | 'modes';
+    selectedAging?: 'all' | 'current' | 'days30' | 'days60' | 'days90Plus';
+    selectedMode?: string;
+    selectedCustomerName?: string;
+  } | null>(null);
+
+  // Fallback active filter if AI Prediction is disabled by admin
+  React.useEffect(() => {
+    if (timeFilter === 'prediction' && visibility.showAiBusinessAnalyst === false) {
+      setTimeFilter('month');
+    }
+  }, [timeFilter, visibility.showAiBusinessAnalyst]);
 
   // State & Ref for auto-hiding filter bar on scroll
   const [isFilterVisible, setIsFilterVisible] = useState(true);
@@ -986,6 +1599,30 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
   }, [stats.chartDataRevenueAll, timeFilter]);
 
+  // Lookup map for customer phone numbers & cities
+  const customerPhoneMap = useMemo(() => {
+    const map = new Map<string, { mobile: string; city: string }>();
+    (customers || []).forEach(c => {
+      if (c.name) {
+        map.set(c.name.trim().toLowerCase(), {
+          mobile: c.mobile || (c as any).phone || '',
+          city: c.city || ''
+        });
+      }
+    });
+    return map;
+  }, [customers]);
+
+  const getPhoneForInv = (inv: Invoice): string => {
+    if (inv.customerMobile) return inv.customerMobile;
+    const legacy = (inv as any).customerPhone || (inv as any).phone || (inv as any).mobile;
+    if (legacy) return String(legacy);
+    if (inv.customerName) {
+      return customerPhoneMap.get(inv.customerName.trim().toLowerCase())?.mobile || '';
+    }
+    return '';
+  };
+
   // --- Payment Analytics Calculations ---
   const paymentStats = useMemo(() => {
     if (!enablePaymentTracking) return null;
@@ -996,12 +1633,80 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
     let partialCount = 0;
     let unpaidCount = 0;
 
-    const modeTotals: Record<string, number> = { Cash: 0, UPI: 0, Cheque: 0, 'Bank Transfer': 0, Other: 0 };
-    const customerUnpaid: Record<string, { customerName: string; totalBilled: number; totalPaid: number; totalOwed: number; unpaidBills: number; lastDate: string }> = {};
+    const modeTotals: Record<string, { amount: number; count: number }> = {
+      Cash: { amount: 0, count: 0 },
+      UPI: { amount: 0, count: 0 },
+      Cheque: { amount: 0, count: 0 },
+      'Bank Transfer': { amount: 0, count: 0 },
+      Other: { amount: 0, count: 0 }
+    };
+
+    const customerUnpaid: Record<string, {
+      customerName: string;
+      customerMobile: string;
+      customerCity: string;
+      totalBilled: number;
+      totalPaid: number;
+      totalOwed: number;
+      unpaidBills: number;
+      invoices: Array<{ id: string; date: string; total: number; paid: number; owed: number }>;
+      lastDate: string;
+    }> = {};
+
+    const collectedTransactions: Array<{
+      invoiceId: string;
+      date: string;
+      customerName: string;
+      customerMobile: string;
+      customerCity: string;
+      amount: number;
+      mode: string;
+      note?: string;
+    }> = [];
+
+    const outstandingInvoices: Array<{
+      invoiceId: string;
+      date: string;
+      customerName: string;
+      customerMobile: string;
+      customerCity: string;
+      total: number;
+      paid: number;
+      owed: number;
+      ageDays: number;
+      agingBucket: 'current' | 'days30' | 'days60' | 'days90Plus';
+    }> = [];
+
+    const agingItems: {
+      current: typeof outstandingInvoices;
+      days30: typeof outstandingInvoices;
+      days60: typeof outstandingInvoices;
+      days90Plus: typeof outstandingInvoices;
+    } = {
+      current: [],
+      days30: [],
+      days60: [],
+      days90Plus: [],
+    };
 
     const now = Date.now();
     const aging = { current: 0, days30: 0, days60: 0, days90Plus: 0 };
     const monthlyCollections: Record<string, number> = {};
+
+    const periodTitle =
+      timeFilter === 'month'
+        ? 'This Month'
+        : timeFilter === 'last-month'
+        ? 'Last Month'
+        : timeFilter === 'year'
+        ? 'This Year'
+        : timeFilter === 'last-year'
+        ? 'Last Year'
+        : timeFilter === 'all'
+        ? 'All Time'
+        : timeFilter === 'custom'
+        ? (customStart && customEnd ? `${customStart} to ${customEnd}` : 'Custom Date Range')
+        : 'Selected Period';
 
     filteredInvoices.forEach(inv => {
       const invTotal = Number(inv.total) || 0;
@@ -1012,6 +1717,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       totalCollected += invPaid;
 
       const owed = Math.max(0, invTotal - invPaid);
+      const phone = getPhoneForInv(inv);
+      const city = inv.customerCity || customerPhoneMap.get(inv.customerName?.trim().toLowerCase() || '')?.city || '';
 
       if (invPaid >= invTotal - 0.5) {
         paidCount++;
@@ -1023,8 +1730,21 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
       payments.forEach(p => {
         const pAmt = Number(p.amount) || 0;
-        const mode = p.mode || 'Cash';
-        modeTotals[mode] = (modeTotals[mode] || 0) + pAmt;
+        const mode = (p.mode in modeTotals ? p.mode : 'Other');
+        if (!modeTotals[mode]) modeTotals[mode] = { amount: 0, count: 0 };
+        modeTotals[mode].amount += pAmt;
+        modeTotals[mode].count += 1;
+
+        collectedTransactions.push({
+          invoiceId: inv.id,
+          date: p.date || inv.date,
+          customerName: inv.customerName,
+          customerMobile: phone,
+          customerCity: city,
+          amount: pAmt,
+          mode: mode,
+          note: p.note
+        });
 
         if (p.date) {
           const parts = p.date.split('/');
@@ -1037,31 +1757,72 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
         if (!customerUnpaid[inv.customerName]) {
           customerUnpaid[inv.customerName] = {
             customerName: inv.customerName,
+            customerMobile: phone,
+            customerCity: city,
             totalBilled: 0,
             totalPaid: 0,
             totalOwed: 0,
             unpaidBills: 0,
+            invoices: [],
             lastDate: inv.date
           };
         }
-        customerUnpaid[inv.customerName].totalBilled += invTotal;
-        customerUnpaid[inv.customerName].totalPaid += invPaid;
+        const custObj = customerUnpaid[inv.customerName];
+        custObj.totalBilled += invTotal;
+        custObj.totalPaid += invPaid;
+        if (phone && !custObj.customerMobile) custObj.customerMobile = phone;
+        if (city && !custObj.customerCity) custObj.customerCity = city;
+
         if (owed > 0.5) {
-          customerUnpaid[inv.customerName].totalOwed += owed;
-          customerUnpaid[inv.customerName].unpaidBills += 1;
+          custObj.totalOwed += owed;
+          custObj.unpaidBills += 1;
+          custObj.invoices.push({
+            id: inv.id,
+            date: inv.date,
+            total: invTotal,
+            paid: invPaid,
+            owed: owed
+          });
         }
-        if (inv.date > customerUnpaid[inv.customerName].lastDate) {
-          customerUnpaid[inv.customerName].lastDate = inv.date;
+        if (inv.date > custObj.lastDate) {
+          custObj.lastDate = inv.date;
         }
       }
 
       if (owed > 0.5) {
         const invTs = parseInvoiceDate(inv.date);
         const ageDays = invTs > 0 ? Math.floor((now - invTs) / (1000 * 60 * 60 * 24)) : 0;
-        if (ageDays <= 30) aging.current += owed;
-        else if (ageDays <= 60) aging.days30 += owed;
-        else if (ageDays <= 90) aging.days60 += owed;
-        else aging.days90Plus += owed;
+        let agingBucket: 'current' | 'days30' | 'days60' | 'days90Plus' = 'current';
+
+        if (ageDays <= 30) {
+          aging.current += owed;
+          agingBucket = 'current';
+        } else if (ageDays <= 60) {
+          aging.days30 += owed;
+          agingBucket = 'days30';
+        } else if (ageDays <= 90) {
+          aging.days60 += owed;
+          agingBucket = 'days60';
+        } else {
+          aging.days90Plus += owed;
+          agingBucket = 'days90Plus';
+        }
+
+        const outItem = {
+          invoiceId: inv.id,
+          date: inv.date,
+          customerName: inv.customerName,
+          customerMobile: phone,
+          customerCity: city,
+          total: invTotal,
+          paid: invPaid,
+          owed: owed,
+          ageDays: ageDays,
+          agingBucket: agingBucket
+        };
+
+        outstandingInvoices.push(outItem);
+        agingItems[agingBucket].push(outItem);
       }
     });
 
@@ -1069,18 +1830,21 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
     const collectionRate = totalBilled > 0 ? Math.min(100, (totalCollected / totalBilled) * 100) : 0;
 
     const modeChartData = Object.entries(modeTotals)
-      .filter(([_, amt]) => amt > 0)
-      .map(([name, amt]) => ({ name, value: amt }));
+      .filter(([_, data]) => data.amount > 0)
+      .map(([name, data]) => ({ name, value: data.amount }));
 
-    const topOverdueCustomers = Object.values(customerUnpaid)
-      .sort((a, b) => b.totalOwed - a.totalOwed)
-      .slice(0, 5);
+    const allOverdueCustomers = Object.values(customerUnpaid)
+      .filter(c => c.totalOwed > 0.5)
+      .sort((a, b) => b.totalOwed - a.totalOwed);
+
+    const topOverdueCustomers = allOverdueCustomers.slice(0, 5);
 
     const collectionTrendData = Object.entries(monthlyCollections)
       .map(([dateStr, revenue]) => ({ dateStr, revenue }))
       .slice(-6);
 
     return {
+      periodTitle,
       totalBilled,
       totalCollected,
       totalOutstanding,
@@ -1088,12 +1852,21 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       paidCount,
       partialCount,
       unpaidCount,
+      modeTotals,
       modeChartData,
+      allOverdueCustomers,
       topOverdueCustomers,
       aging,
+      agingItems,
+      collectedTransactions: collectedTransactions.sort((a, b) => {
+        const tA = parseInvoiceDate(a.date);
+        const tB = parseInvoiceDate(b.date);
+        return tB - tA;
+      }),
+      outstandingInvoices: outstandingInvoices.sort((a, b) => b.owed - a.owed),
       collectionTrendData
     };
-  }, [filteredInvoices, enablePaymentTracking]);
+  }, [filteredInvoices, enablePaymentTracking, timeFilter, customStart, customEnd, customers, customerPhoneMap]);
 
   // --- AI Analysis ---
   const generateInsights = async (isPredictionMode = false) => {
@@ -1476,17 +2249,17 @@ Provide response in JSON with these fields:
     <div className="h-full flex flex-col overflow-hidden">
       <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <div className="p-3 md:p-5 border-b border-slate-200 bg-gradient-to-r from-violet-50 to-fuchsia-50 shrink-0">
+        <div className="p-3 md:p-5 border-b border-slate-200 bg-gradient-to-r from-red-50 to-orange-50 shrink-0">
           <div className="flex justify-between items-center gap-3">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              <BarChart3 className="w-5 h-5 md:w-6 md:h-6 text-violet-600 shrink-0" />
+              <BarChart3 className="w-5 h-5 md:w-6 md:h-6 text-red-600 shrink-0" />
               <div className="min-w-0">
                 <h2 className="text-base md:text-2xl font-bold text-slate-800 truncate">Analytics Dashboard</h2>
-                <p className="text-[10px] md:text-xs text-slate-500">Real-time insights</p>
+                <p className="text-[10px] md:text-xs text-slate-500">Real-time business insights & reports</p>
               </div>
             </div>
             <div className="bg-white px-2 md:px-3 py-1.5 md:py-2 rounded-lg shadow-sm border border-slate-200 shrink-0">
-              <div className="text-sm md:text-2xl font-bold text-violet-600">{invoices.length}</div>
+              <div className="text-sm md:text-2xl font-bold text-red-600">{invoices.length}</div>
               <div className="text-[9px] md:text-[10px] text-slate-500 uppercase font-bold">Bills</div>
             </div>
           </div>
@@ -1512,7 +2285,9 @@ Provide response in JSON with these fields:
                   { id: 'last-year', label: 'Last Year', fullLabel: 'Last Year', icon: '📊' },
                   { id: 'all', label: 'All Time', fullLabel: 'All Time', icon: '🌐' },
                   { id: 'custom', label: 'Custom Date', fullLabel: 'Custom Date Range', icon: '📆', fullWidthMobile: true },
-                ].map((opt) => {
+                ]
+                  .filter(opt => opt.id !== 'prediction' || visibility.showAiBusinessAnalyst !== false)
+                  .map((opt) => {
                   const isActive = timeFilter === opt.id;
                   const isSpecial = opt.special;
                   const isFullWidthMobile = opt.fullWidthMobile;
@@ -1671,7 +2446,9 @@ Provide response in JSON with these fields:
                   const summary = formatVolumeSummary(stats.totalBusinessVolumeMap);
                   const title = summary.dominantUnit ? `Total ${summary.dominantUnit} Sold` : 'Total Volume Sold';
                   const iconText = getVolumeIcon(summary.dominantUnit);
-                  const valueDisplay = summary.text || '0 Units';
+                  const dominantDisplay = summary.dominantQty > 0
+                    ? `${summary.dominantQty % 1 === 0 ? summary.dominantQty.toLocaleString('en-IN') : summary.dominantQty.toFixed(1)} ${summary.dominantUnit}`
+                    : '0 Units';
 
                   return (
                     <>
@@ -1681,10 +2458,20 @@ Provide response in JSON with these fields:
                         </div>
                         <span className="text-xs font-bold text-amber-600 bg-amber-100 px-2 py-1 rounded-full">{summary.dominantUnit || 'Volume'}</span>
                       </div>
-                      <div className="text-lg md:text-xl font-bold text-slate-900 truncate" title={valueDisplay}>
-                        {valueDisplay}
+                      <div className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 whitespace-nowrap">
+                        <TooltipValue
+                          display={dominantDisplay}
+                          full={summary.text || dominantDisplay}
+                        />
                       </div>
-                      <div className="text-xs text-slate-600 mt-1 font-medium">{title}</div>
+                      <div className="text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
+                        <span>{title}</span>
+                        {summary.secondaryText && (
+                          <span className="text-[10px] font-bold text-amber-700 bg-amber-100/90 px-1.5 py-0.5 rounded-md" title={summary.text}>
+                            {summary.secondaryText}
+                          </span>
+                        )}
+                      </div>
                     </>
                   );
                 })()}
@@ -1705,15 +2492,16 @@ Provide response in JSON with these fields:
             </div>
 
             {/* --- Product Analytics Section --- */}
-            <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 md:p-6 rounded-xl shadow-sm border border-purple-200">
-              <h3 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <PieIcon className="w-5 h-5 text-purple-600" />
-                Product Analytics
-              </h3>
+            {visibility.showProductAnalysis !== false && (
+              <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 md:p-6 rounded-xl shadow-sm border border-purple-200">
+                <h3 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <PieIcon className="w-5 h-5 text-purple-600" />
+                  Product Analytics
+                </h3>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
                 {/* Top Products by Revenue */}
-                <div className="bg-white p-4 rounded-lg shadow-sm">
+                <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col justify-between">
                   <h4 className="font-bold text-slate-700 text-sm mb-3">Top Products by Revenue</h4>
                   {/* Mobile: Pie + Bars side-by-side */}
                   <div className="md:hidden">
@@ -1741,15 +2529,15 @@ Provide response in JSON with these fields:
                   </div>
 
                   {/* Desktop: Pie + Legend */}
-                  <div className="hidden md:block w-full min-h-[18rem]">
+                  <div className="hidden md:flex flex-1 items-center justify-center w-full py-1">
                     <SimplePieChart data={stats.chartDataProducts} showWeight={true} />
                   </div>
                 </div>
 
                 {/* Product Leaderboard */}
-                <div className="bg-white p-4 rounded-lg shadow-sm">
+                <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col">
                   <h4 className="font-bold text-slate-700 text-sm mb-3">Product Leaderboard</h4>
-                  <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
+                  <div className="space-y-2 flex-1 overflow-y-auto max-h-[360px] pr-1 scrollbar-thin">
                     {(stats.topProducts || []).map((prod, idx) => (
                       <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${
@@ -1805,18 +2593,20 @@ Provide response in JSON with these fields:
                 </div>
               </div>
             </div>
+          )}
 
             {/* --- Customer Analytics Section --- */}
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 md:p-6 rounded-xl shadow-sm border border-blue-200">
-              <h3 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Users className="w-5 h-6 text-blue-600" />
-                Customer Analytics
-              </h3>
+            {visibility.showCustomerAnalysis !== false && (
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 md:p-6 rounded-xl shadow-sm border border-blue-200">
+                <h3 className="text-lg md:text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <Users className="w-5 h-6 text-blue-600" />
+                  Customer Analytics
+                </h3>
 
               {/* Top Customers by Revenue */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-6">
                 {/* Customer Revenue Distribution */}
-                <div className="bg-white p-4 rounded-lg shadow-sm">
+                <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col justify-between">
                   <h4 className="font-bold text-slate-700 text-sm mb-3">Top Customers by Revenue</h4>
                   {/* Mobile: Pie + Bars side-by-side */}
                   <div className="md:hidden">
@@ -1838,15 +2628,15 @@ Provide response in JSON with these fields:
                   </div>
 
                   {/* Desktop: Pie + Legend */}
-                  <div className="hidden md:block w-full min-h-[16rem] md:h-64">
+                  <div className="hidden md:flex flex-1 items-center justify-center w-full py-1">
                     <SimplePieChart data={stats.chartDataCustomers || []} />
                   </div>
                 </div>
 
                 {/* Customer Leaderboard */}
-                <div className="bg-white p-4 rounded-lg shadow-sm">
+                <div className="bg-white p-4 rounded-lg shadow-sm flex flex-col">
                   <h4 className="font-bold text-slate-700 text-sm mb-3">Customer Leaderboard</h4>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 flex-1 overflow-y-auto max-h-[360px] pr-1 scrollbar-thin">
                     {(stats.topCustomers || []).map((customer, idx) => (
                       <div key={idx} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${idx === 0 ? 'bg-yellow-100 text-yellow-700' :
@@ -1964,39 +2754,152 @@ Provide response in JSON with these fields:
                 </div>
               </div>
             </div>
+          )}
 
             {/* --- Payment & Collection Analytics Section --- */}
             {enablePaymentTracking && paymentStats && (
-              <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 p-4 md:p-6 rounded-xl shadow-sm border border-emerald-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 p-4 md:p-6 rounded-2xl shadow-sm border border-emerald-200 space-y-4 md:space-y-6">
+                {/* Header with Title & Period Badge */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h3 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2">
                       <Wallet className="w-5 h-5 text-emerald-600" />
                       Payment & Collection Analytics
                     </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Real-time receivables, payment modes & collection health</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Real-time receivables, monthly collection targets & debtors breakdown</p>
                   </div>
-                  <div className="bg-white/90 backdrop-blur-xs px-3 py-1 rounded-full border border-emerald-300 text-xs font-bold text-emerald-800 shrink-0 self-start sm:self-auto">
-                    Collection Rate: {paymentStats.collectionRate.toFixed(1)}%
+                  <div className="flex items-center gap-2">
+                    <span className="bg-white/90 backdrop-blur-xs px-3 py-1 rounded-full border border-emerald-300 text-xs font-extrabold text-emerald-800 shrink-0 self-start sm:self-auto shadow-xs">
+                      {paymentStats.periodTitle}
+                    </span>
                   </div>
                 </div>
 
-                {/* 4 Payment KPI Cards */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+                {/* --- 🎯 Monthly / Period Collection Target & Progress Banner --- */}
+                <div className="bg-white/95 backdrop-blur-md rounded-2xl p-4 sm:p-5 border border-emerald-300 shadow-sm transition-all hover:shadow-md">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-emerald-100">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                          Collection Goal • {paymentStats.periodTitle}
+                        </span>
+                      </div>
+                      <h4 className="text-sm sm:text-base font-bold text-slate-800 mt-1">
+                        How much collection is needed & achieved
+                      </h4>
+                    </div>
+
+                    {/* Action Buttons: Full long / full width on mobile/tablet */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full md:w-auto shrink-0">
+                      <button
+                        onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding', selectedAging: 'all' })}
+                        className="w-full px-4 py-2.5 sm:py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.98]"
+                        title="Click to view all pending debtors and send WhatsApp reminders"
+                      >
+                        <AlertCircle size={15} />
+                        <span>Who Owes ({paymentStats.outstandingInvoices.length} bills)</span>
+                      </button>
+
+                      <button
+                        onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'collected' })}
+                        className="w-full px-4 py-2.5 sm:py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.98]"
+                        title="Click to view who paid and all collection receipts"
+                      >
+                        <CheckCircle2 size={15} />
+                        <span>Who Paid ({paymentStats.collectedTransactions.length} txns)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3 Metric Summary Blocks */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 my-3">
+                    {/* 1. Total Target */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding' })}
+                      className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200 cursor-pointer transition-all group select-none"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-500 uppercase">1. Collection Needed (Target)</span>
+                        <ChevronRight size={14} className="text-slate-400 group-hover:text-slate-700 group-hover:translate-x-0.5 transition-all" />
+                      </div>
+                      <div className="text-lg sm:text-2xl font-black text-slate-900 mt-0.5">{formatINRFull(paymentStats.totalBilled)}</div>
+                      <div className="text-[11px] text-slate-400">Total invoice billing for {paymentStats.periodTitle}</div>
+                    </div>
+
+                    {/* 2. Collected */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'collected' })}
+                      className="p-3 bg-emerald-50 hover:bg-emerald-100/80 rounded-xl border border-emerald-200 cursor-pointer transition-all group select-none"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-emerald-700 uppercase flex items-center gap-1">
+                          <CheckCircle2 size={13} /> 2. Collected So Far
+                        </span>
+                        <ChevronRight size={14} className="text-emerald-500 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition-all" />
+                      </div>
+                      <div className="text-lg sm:text-2xl font-black text-emerald-700 mt-0.5">{formatINRFull(paymentStats.totalCollected)}</div>
+                      <div className="text-[11px] text-emerald-600 font-semibold">{paymentStats.collectionRate.toFixed(1)}% achieved</div>
+                    </div>
+
+                    {/* 3. Remaining Needed */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding' })}
+                      className="p-3 bg-rose-50 hover:bg-rose-100/80 rounded-xl border border-rose-200 cursor-pointer transition-all group select-none"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-rose-700 uppercase flex items-center gap-1">
+                          <Clock size={13} /> 3. Remaining Collection Needed
+                        </span>
+                        <ChevronRight size={14} className="text-rose-500 group-hover:text-rose-700 group-hover:translate-x-0.5 transition-all" />
+                      </div>
+                      <div className="text-lg sm:text-2xl font-black text-rose-600 mt-0.5">{formatINRFull(paymentStats.totalOutstanding)}</div>
+                      <div className="text-[11px] text-rose-600 font-medium">
+                        {paymentStats.totalOutstanding > 0
+                          ? `Owed by ${paymentStats.allOverdueCustomers.length} customer(s)`
+                          : '🎉 All collections cleared!'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="mt-2 space-y-1.5">
+                    <div className="flex justify-between text-xs font-bold text-slate-700">
+                      <span>Collection Progress ({paymentStats.collectionRate.toFixed(1)}%)</span>
+                      <span className="text-emerald-700">{formatINRFull(paymentStats.totalCollected)} of {formatINRFull(paymentStats.totalBilled)}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden flex shadow-inner">
+                      <div
+                        className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full transition-all duration-500"
+                        style={{ width: `${paymentStats.collectionRate}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[11px] text-slate-500 font-medium">
+                      <span>{paymentStats.paidCount} fully paid bills</span>
+                      <span className="text-rose-600 font-bold">{formatINRFull(paymentStats.totalOutstanding)} remaining balance</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4 Interactive Payment KPI Cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
                   <MetricCard
                     icon={<Wallet size={20} className="text-white" />}
                     title="Total Collected"
                     value={formatINRFull(paymentStats.totalCollected)}
-                    subtitle={`${paymentStats.paidCount} fully paid`}
+                    subtitle={`${paymentStats.paidCount} fully paid • Click to view`}
                     color="from-emerald-500 to-green-600"
+                    onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'collected' })}
+                    clickableHint="View Paid"
                   />
 
                   <MetricCard
                     icon={<AlertCircle size={20} className="text-white" />}
                     title="Outstanding Balance"
                     value={formatINRFull(paymentStats.totalOutstanding)}
-                    subtitle={`${paymentStats.unpaidCount + paymentStats.partialCount} pending bills`}
+                    subtitle={`${paymentStats.unpaidCount + paymentStats.partialCount} pending bills • Click to view`}
                     color="from-rose-500 to-red-600"
+                    onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding', selectedAging: 'all' })}
+                    clickableHint="View Owers"
                   />
 
                   <MetricCard
@@ -2005,6 +2908,8 @@ Provide response in JSON with these fields:
                     value={`${paymentStats.collectionRate.toFixed(1)}%`}
                     subtitle={`₹${Math.round(paymentStats.totalCollected).toLocaleString()} of ₹${Math.round(paymentStats.totalBilled).toLocaleString()}`}
                     color="from-blue-500 to-indigo-600"
+                    onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding' })}
+                    clickableHint="Explore"
                   />
 
                   <MetricCard
@@ -2013,26 +2918,60 @@ Provide response in JSON with these fields:
                     value={`${paymentStats.paidCount} Paid`}
                     subtitle={`${paymentStats.partialCount} Partial • ${paymentStats.unpaidCount} Unpaid`}
                     color="from-purple-500 to-violet-600"
+                    onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding' })}
+                    clickableHint="Details"
                   />
                 </div>
 
                 {/* Payment Charts & Overdue Customers Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
                   {/* Payment Modes Breakdown */}
-                  <div className="bg-white p-4 rounded-lg shadow-sm">
-                    <h4 className="font-bold text-slate-700 text-sm mb-3">Payment Modes Breakdown</h4>
+                  <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-bold text-slate-700 text-sm">Payment Modes Breakdown</h4>
+                      <span className="text-[11px] text-slate-400 font-medium">Click any mode to inspect</span>
+                    </div>
+
                     {paymentStats.modeChartData.length > 0 ? (
-                      <SimplePieChart data={paymentStats.modeChartData} showLegend={true} />
+                      <div className="space-y-3 flex flex-col items-center justify-center w-full">
+                        <SimplePieChart data={paymentStats.modeChartData} showLegend={true} />
+                        {/* Interactive Mode Pills */}
+                        <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2 border-t border-slate-100 w-full">
+                          {(Object.entries(paymentStats.modeTotals) as Array<[string, { amount: number; count: number }]>)
+                            .filter(([_, d]) => d.amount > 0)
+                            .map(([modeName, d]) => (
+                              <button
+                                key={modeName}
+                                onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'modes', selectedMode: modeName })}
+                                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <span className="font-bold">{modeName}:</span>
+                                <span className="text-emerald-700 font-extrabold">{formatINRFull(d.amount)}</span>
+                                <span className="text-[10px] text-slate-400 bg-white px-1.5 py-0.2 rounded-full font-normal">({d.count})</span>
+                              </button>
+                            ))}
+                        </div>
+                      </div>
                     ) : (
                       <div className="h-44 flex items-center justify-center text-xs text-slate-400">No payment mode records recorded</div>
                     )}
                   </div>
 
                   {/* Top Pending / Overdue Customers */}
-                  <div className="bg-white p-4 rounded-lg shadow-sm">
-                    <h4 className="font-bold text-slate-700 text-sm mb-3">Top Pending / Overdue Customers</h4>
+                  <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-bold text-slate-700 text-sm">Top Pending / Overdue Debtors</h4>
+                      <button
+                        onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding', selectedAging: 'all' })}
+                        className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <span>View All ({paymentStats.allOverdueCustomers.length})</span>
+                        <ChevronRight size={12} />
+                      </button>
+                    </div>
+
                     {paymentStats.topOverdueCustomers.length > 0 ? (
-                      <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                      <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
                         {paymentStats.topOverdueCustomers.map((cust, idx) => {
                           const billed = cust.totalBilled || 1;
                           const paid = cust.totalPaid || 0;
@@ -2042,26 +2981,33 @@ Provide response in JSON with these fields:
                           const owedPct = Math.min(100 - paidPct, Math.max(0, (owed / billed) * 100));
 
                           return (
-                            <div key={idx} className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-xl transition-all border border-slate-100 space-y-2">
+                            <div
+                              key={idx}
+                              onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding', selectedCustomerName: cust.customerName })}
+                              className="p-2.5 sm:p-3 bg-slate-50 hover:bg-emerald-50/60 rounded-xl transition-all border border-slate-100 hover:border-emerald-200 space-y-2 cursor-pointer group"
+                            >
                               {/* Header: Customer Name & Pending Bill count */}
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                                <div>
-                                  <span className="font-bold text-xs sm:text-sm text-slate-800">{cust.customerName}</span>
-                                  <span className="text-[10px] text-slate-500 font-medium ml-2">
-                                    ({cust.unpaidBills} pending bill{cust.unpaidBills !== 1 ? 's' : ''})
+                                <div className="min-w-0">
+                                  <span className="font-bold text-xs sm:text-sm text-slate-850 group-hover:text-emerald-700 transition-colors truncate">
+                                    {cust.customerName}
+                                  </span>
+                                  {cust.customerCity && (
+                                    <span className="text-[11px] text-slate-400 font-normal ml-1.5">({cust.customerCity})</span>
+                                  )}
+                                  <span className="text-[10px] text-slate-500 font-medium ml-2 bg-slate-200/70 px-1.5 py-0.5 rounded">
+                                    {cust.unpaidBills} bill{cust.unpaidBills !== 1 ? 's' : ''}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap">
-                                  <span className="text-slate-900 font-bold" title="Total Billed">Total: {formatINRFull(billed)}</span>
+                                  <span className="text-slate-500 font-medium">Billed: {formatINRFull(billed)}</span>
                                   <span className="text-slate-300">•</span>
-                                  <span className="text-emerald-600 font-bold" title="Paid Amount">Paid: {formatINRFull(paid)}</span>
-                                  <span className="text-slate-300">•</span>
-                                  <span className="text-red-600 font-bold" title="Due Amount">Due: {formatINRFull(owed)}</span>
+                                  <span className="text-red-600 font-extrabold">Due: {formatINRFull(owed)}</span>
                                 </div>
                               </div>
 
                               {/* Stacked Progress Bar: Green for Paid, Red for Outstanding Due */}
-                              <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden flex shadow-xs">
+                              <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden flex shadow-xs">
                                 {paidPct > 0 && (
                                   <div
                                     className="bg-emerald-500 h-full transition-all duration-300"
@@ -2089,25 +3035,65 @@ Provide response in JSON with these fields:
                   </div>
                 </div>
 
-                {/* Outstanding Aging Breakdown */}
-                <div className="mt-4 bg-white p-4 rounded-lg shadow-sm">
-                  <h4 className="font-bold text-slate-700 text-sm mb-3">Outstanding Aging Analysis</h4>
+                {/* Outstanding Aging Breakdown - Clickable Buckets */}
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h4 className="font-bold text-slate-700 text-sm">Outstanding Aging Analysis</h4>
+                      <p className="text-[11px] text-slate-400">Click any time bracket to view debtors</p>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-                      <div className="text-[10px] font-bold uppercase text-emerald-700">0-30 Days</div>
+                    {/* 0-30 Days */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'aging', selectedAging: 'current' })}
+                      className="p-3 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none group"
+                    >
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase text-emerald-700">
+                        <span>0-30 Days</span>
+                        <span className="bg-emerald-200/70 text-emerald-900 px-1.5 py-0.2 rounded font-normal">{paymentStats.agingItems.current.length}</span>
+                      </div>
                       <div className="text-sm sm:text-base font-extrabold text-emerald-900 mt-1">{formatINRFull(paymentStats.aging.current)}</div>
+                      <div className="text-[10px] text-emerald-600 group-hover:underline mt-0.5">Click to view bills →</div>
                     </div>
-                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                      <div className="text-[10px] font-bold uppercase text-yellow-700">31-60 Days</div>
+
+                    {/* 31-60 Days */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'aging', selectedAging: 'days30' })}
+                      className="p-3 bg-yellow-50 hover:bg-yellow-100/80 border border-yellow-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none group"
+                    >
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase text-yellow-700">
+                        <span>31-60 Days</span>
+                        <span className="bg-yellow-200/70 text-yellow-900 px-1.5 py-0.2 rounded font-normal">{paymentStats.agingItems.days30.length}</span>
+                      </div>
                       <div className="text-sm sm:text-base font-extrabold text-yellow-900 mt-1">{formatINRFull(paymentStats.aging.days30)}</div>
+                      <div className="text-[10px] text-yellow-700 group-hover:underline mt-0.5">Click to view bills →</div>
                     </div>
-                    <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                      <div className="text-[10px] font-bold uppercase text-orange-700">61-90 Days</div>
+
+                    {/* 61-90 Days */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'aging', selectedAging: 'days60' })}
+                      className="p-3 bg-orange-50 hover:bg-orange-100/80 border border-orange-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none group"
+                    >
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase text-orange-700">
+                        <span>61-90 Days</span>
+                        <span className="bg-orange-200/70 text-orange-900 px-1.5 py-0.2 rounded font-normal">{paymentStats.agingItems.days60.length}</span>
+                      </div>
                       <div className="text-sm sm:text-base font-extrabold text-orange-900 mt-1">{formatINRFull(paymentStats.aging.days60)}</div>
+                      <div className="text-[10px] text-orange-700 group-hover:underline mt-0.5">Click to view bills →</div>
                     </div>
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg">
-                      <div className="text-[10px] font-bold uppercase text-rose-700">90+ Days (High Risk)</div>
+
+                    {/* 90+ Days */}
+                    <div
+                      onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'aging', selectedAging: 'days90Plus' })}
+                      className="p-3 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 rounded-xl cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] select-none group"
+                    >
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase text-rose-700">
+                        <span>90+ Days (High Risk)</span>
+                        <span className="bg-rose-200/70 text-rose-900 px-1.5 py-0.2 rounded font-normal">{paymentStats.agingItems.days90Plus.length}</span>
+                      </div>
                       <div className="text-sm sm:text-base font-extrabold text-rose-900 mt-1">{formatINRFull(paymentStats.aging.days90Plus)}</div>
+                      <div className="text-[10px] text-rose-700 group-hover:underline mt-0.5">Click to view bills →</div>
                     </div>
                   </div>
                 </div>
@@ -2115,7 +3101,8 @@ Provide response in JSON with these fields:
             )}
 
             {/* --- AI Section --- */}
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl p-3 md:p-6 text-white shadow-lg">
+            {visibility.showAiBusinessAnalyst !== false && (
+              <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-xl p-3 md:p-6 text-white shadow-lg">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
                 <div className="flex-1">
                   <h3 className="text-base md:text-xl font-bold flex items-center gap-2">
@@ -2624,12 +3611,15 @@ Provide response in JSON with these fields:
                 </div>
               </div>
             </div>
+          )}
+
+
           </div>
         </div>
       </div>
 
       {/* Customer Spending & Purchase Details Modal */}
-      {selectedCustomerForModal && (
+      {selectedCustomerForModal && visibility.showCustomerPurchaseDetails !== false && (
         <CustomerSpendingModal
           customer={selectedCustomerForModal}
           invoices={invoices}
@@ -2638,13 +3628,171 @@ Provide response in JSON with these fields:
       )}
 
       {/* Product Analysis & Trend Breakdown Modal */}
-      {selectedProductForModal && (
+      {selectedProductForModal && visibility.showProductAnalysis !== false && (
         <ProductAnalysisModal
           product={selectedProductForModal}
           invoices={invoices}
           customers={customers}
           onClose={() => setSelectedProductForModal(null)}
         />
+      )}
+
+      {/* Interactive Payment Analytics Detail Modal */}
+      {paymentDetailModal?.isOpen && paymentStats && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4 overflow-y-auto no-print">
+          <div className="bg-white rounded-none sm:rounded-2xl shadow-2xl w-full max-w-4xl h-full sm:h-auto max-h-none sm:max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-3 sm:p-5 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 sm:p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl shrink-0">
+                  <Wallet className="w-5 h-5 sm:w-6 sm:h-6" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm sm:text-lg truncate flex items-center gap-2">
+                    Payment & Collection Deep-Dive
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                    Debtors, receipts & aging for <span className="text-emerald-400 font-bold">{paymentStats.periodTitle}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setPaymentDetailModal(null)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Target Summary Chips */}
+            <div className="bg-slate-100 px-2.5 py-2 sm:px-4 sm:py-2.5 border-b border-slate-200 grid grid-cols-3 gap-1.5 sm:gap-2 text-center text-xs shrink-0">
+              <div className="bg-white p-1.5 sm:p-2 rounded-lg border border-slate-200">
+                <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400">Target</div>
+                <div className="font-black text-slate-800 text-xs sm:text-sm truncate">{formatINRFull(paymentStats.totalBilled)}</div>
+              </div>
+              <div className="bg-emerald-50 p-1.5 sm:p-2 rounded-lg border border-emerald-200">
+                <div className="text-[9px] sm:text-[10px] uppercase font-bold text-emerald-700">Collected</div>
+                <div className="font-black text-emerald-700 text-xs sm:text-sm truncate">{formatINRFull(paymentStats.totalCollected)} <span className="text-[10px] font-normal">({paymentStats.collectionRate.toFixed(0)}%)</span></div>
+              </div>
+              <div className="bg-rose-50 p-1.5 sm:p-2 rounded-lg border border-rose-200">
+                <div className="text-[9px] sm:text-[10px] uppercase font-bold text-rose-700">Pending Due</div>
+                <div className="font-black text-rose-700 text-xs sm:text-sm truncate">{formatINRFull(paymentStats.totalOutstanding)}</div>
+              </div>
+            </div>
+
+            {/* Modal Tabs Header - 4 cols on mobile with no scrolling needed */}
+            <div className="grid grid-cols-4 sm:flex bg-slate-100/90 border-b border-slate-200 p-1 sm:p-2 sm:pb-0 gap-1 shrink-0">
+              <button
+                onClick={() => setPaymentDetailModal(prev => prev ? { ...prev, activeTab: 'outstanding' } : null)}
+                className={`py-2 px-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-t-lg sm:rounded-b-none text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-center ${
+                  paymentDetailModal.activeTab === 'outstanding'
+                    ? 'bg-white text-rose-700 shadow-xs ring-1 ring-rose-200 sm:ring-0 sm:border-b-2 sm:border-rose-600'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                }`}
+              >
+                <AlertCircle size={14} className="text-rose-600 shrink-0" />
+                <span className="truncate">Who Owes</span>
+                <span className="text-[10px] font-extrabold text-rose-600 opacity-90 sm:ml-0.5">({paymentStats.outstandingInvoices.length})</span>
+              </button>
+
+              <button
+                onClick={() => setPaymentDetailModal(prev => prev ? { ...prev, activeTab: 'collected' } : null)}
+                className={`py-2 px-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-t-lg sm:rounded-b-none text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-center ${
+                  paymentDetailModal.activeTab === 'collected'
+                    ? 'bg-white text-emerald-700 shadow-xs ring-1 ring-emerald-200 sm:ring-0 sm:border-b-2 sm:border-emerald-600'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                }`}
+              >
+                <CheckCircle2 size={14} className="text-emerald-600 shrink-0" />
+                <span className="truncate">Who Paid</span>
+                <span className="text-[10px] font-extrabold text-emerald-600 opacity-90 sm:ml-0.5">({paymentStats.collectedTransactions.length})</span>
+              </button>
+
+              <button
+                onClick={() => setPaymentDetailModal(prev => prev ? { ...prev, activeTab: 'aging' } : null)}
+                className={`py-2 px-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-t-lg sm:rounded-b-none text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-center ${
+                  paymentDetailModal.activeTab === 'aging'
+                    ? 'bg-white text-amber-700 shadow-xs ring-1 ring-amber-200 sm:ring-0 sm:border-b-2 sm:border-amber-600'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                }`}
+              >
+                <Clock size={14} className="text-amber-600 shrink-0" />
+                <span className="truncate">Aging</span>
+                <span className="hidden sm:inline text-[10px] opacity-75 font-normal">(0-90+d)</span>
+              </button>
+
+              <button
+                onClick={() => setPaymentDetailModal(prev => prev ? { ...prev, activeTab: 'modes' } : null)}
+                className={`py-2 px-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-t-lg sm:rounded-b-none text-[11px] sm:text-xs font-bold transition-all cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 text-center ${
+                  paymentDetailModal.activeTab === 'modes'
+                    ? 'bg-white text-indigo-700 shadow-xs ring-1 ring-indigo-200 sm:ring-0 sm:border-b-2 sm:border-indigo-600'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                }`}
+              >
+                <CreditCard size={14} className="text-indigo-600 shrink-0" />
+                <span className="truncate">Modes</span>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-50">
+              {/* TAB 1: Outstanding Debtors */}
+              {paymentDetailModal.activeTab === 'outstanding' && (
+                <OutstandingDebtorsTab
+                  outstandingInvoices={paymentStats.outstandingInvoices}
+                  allOverdueCustomers={paymentStats.allOverdueCustomers}
+                  selectedAging={paymentDetailModal.selectedAging}
+                  selectedCustomerName={paymentDetailModal.selectedCustomerName}
+                  onClearCustomer={() => setPaymentDetailModal(prev => prev ? { ...prev, selectedCustomerName: undefined } : null)}
+                  onSelectAging={(aging) => setPaymentDetailModal(prev => prev ? { ...prev, selectedAging: aging } : null)}
+                  settings={settings}
+                />
+              )}
+
+              {/* TAB 2: Collected Payments */}
+              {paymentDetailModal.activeTab === 'collected' && (
+                <CollectedPaymentsTab
+                  collectedTransactions={paymentStats.collectedTransactions}
+                  settings={settings}
+                />
+              )}
+
+              {/* TAB 3: Aging Analysis */}
+              {paymentDetailModal.activeTab === 'aging' && (
+                <AgingAnalysisTab
+                  aging={paymentStats.aging}
+                  agingItems={paymentStats.agingItems}
+                  onSelectAging={(aging) => setPaymentDetailModal(prev => prev ? { ...prev, activeTab: 'outstanding', selectedAging: aging } : null)}
+                  settings={settings}
+                />
+              )}
+
+              {/* TAB 4: Payment Modes */}
+              {paymentDetailModal.activeTab === 'modes' && (
+                <PaymentModesTab
+                  modeTotals={paymentStats.modeTotals}
+                  collectedTransactions={paymentStats.collectedTransactions}
+                  selectedMode={paymentDetailModal.selectedMode}
+                  onSelectMode={(mode) => setPaymentDetailModal(prev => prev ? { ...prev, selectedMode: mode } : null)}
+                />
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 sm:p-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 shrink-0">
+              <span>💡 WhatsApp reminders automatically include pending invoice details and bank/UPI details</span>
+              <button
+                onClick={() => setPaymentDetailModal(null)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-bold transition-colors cursor-pointer w-full sm:w-auto"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

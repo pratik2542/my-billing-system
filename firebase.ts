@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, CustomProvider } from "firebase/app-check";
 
 // Firebase project configuration
 export const firebaseConfig = {
@@ -17,25 +17,38 @@ export const firebaseConfig = {
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// --- Firebase App Check with reCAPTCHA Enterprise ---
-// On localhost, enable debug mode so local dev doesn't need a real reCAPTCHA challenge.
-// IMPORTANT: The debug token printed in the browser console must be registered in:
-//   Firebase Console > App Check > Apps > ⋮ > Manage debug tokens
-if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-  // @ts-ignore — self.FIREBASE_APPCHECK_DEBUG_TOKEN enables debug mode on localhost
-  self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
-}
+// --- Firebase App Check Setup ---
+const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
-if (recaptchaSiteKey) {
+if (typeof window !== 'undefined') {
+  const debugToken = import.meta.env.VITE_FIREBASE_APPCHECK_DEBUG_TOKEN || 'FD76B0B8-22B2-4E57-9A1D-6F47970C8888';
+  if (isLocalhost) {
+    // @ts-ignore
+    self.FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken;
+  }
+
+  const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
   try {
-    initializeAppCheck(app, {
-      provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
-      isTokenAutoRefreshEnabled: true
-    });
-    console.log('App Check initialized with reCAPTCHA Enterprise');
+    if (isLocalhost) {
+      initializeAppCheck(app, {
+        provider: new CustomProvider({
+          getToken: () => Promise.resolve({
+            token: debugToken,
+            expireTimeMillis: Date.now() + 24 * 3600 * 1000
+          })
+        }),
+        isTokenAutoRefreshEnabled: true
+      });
+      console.log('App Check initialized on localhost with debug token:', debugToken);
+    } else if (recaptchaSiteKey) {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+        isTokenAutoRefreshEnabled: true
+      });
+      console.log('App Check initialized with reCAPTCHA Enterprise');
+    }
   } catch (e) {
-    console.warn('App Check initialization failed:', e);
+    console.warn('App Check initialization warning:', e);
   }
 }
 

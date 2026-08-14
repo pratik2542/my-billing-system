@@ -24,7 +24,9 @@ import {
   User as UserIcon,
   MapPin,
   Phone,
-  PhoneCall
+  PhoneCall,
+  Sparkles,
+  Wallet
 } from 'lucide-react';
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { InvoiceHistory } from './components/InvoiceHistory';
@@ -32,7 +34,9 @@ import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { CustomerSpendingModal } from './components/CustomerSpendingModal';
 import { ProductAnalysisModal } from './components/ProductAnalysisModal';
 import { PaymentTrackerModal } from './components/PaymentTrackerModal';
+import { PaymentManagement } from './components/PaymentManagement';
 import { AdminPortal, parseDeviceInfo } from './components/AdminPortal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   Product,
   Customer,
@@ -62,16 +66,35 @@ import {
   limit,
   increment
 } from 'firebase/firestore';
-import { signInWithEmailAndPassword, onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut, updateEmail, type User } from 'firebase/auth';
 
 const isMainAdminUser = (u: User | null) => {
   if (!u || !u.email) return false;
   return u.email.toLowerCase() === 'admin_billing@pratik.ca';
 };
 
-const isLegacyGlobalAccount = (u: User | null) => {
-  if (!u || !u.email) return false;
-  return u.email.toLowerCase() === 'admin.sjbgu@google.com';
+const isPlaceholderSetting = (s: BusinessSettings | null | undefined): boolean => {
+  if (!s) return true;
+  // If user has set any unique field, it is NOT a placeholder
+  if (s.gstin || s.bankAccountNumber || s.upiId || s.logoUrl || s.signatureUrl || s.signatureName) {
+    return false;
+  }
+  const name = (s.name || '').trim().toLowerCase();
+  const subName = (s.subName || '').trim().toLowerCase();
+  const address = (s.address || '').trim().toLowerCase();
+  const mobile = (s.mobile || '').trim();
+
+  const placeholderNames = ['print works', 'my business', '', 'billing', 'billing system'];
+  const placeholderSubnames = ['quality goods provider', 'offset & screen printing offset process color print & packaging box', ''];
+  const placeholderAddresses = ['123 business road, city', '123 business road, city, m.: 98765 43210', 'opposite ram temple, talaja road, palitana', ''];
+  const placeholderMobiles = ['98765 43210', '9876543210', '94269 89569', '9426989569', ''];
+
+  const isNamePlaceholder = placeholderNames.includes(name);
+  const isSubPlaceholder = placeholderSubnames.includes(subName) || !subName;
+  const isAddrPlaceholder = placeholderAddresses.some(p => address.includes(p)) || !address;
+  const isMobPlaceholder = placeholderMobiles.includes(mobile) || !mobile;
+
+  return isNamePlaceholder && isSubPlaceholder && isAddrPlaceholder && isMobPlaceholder;
 };
 
 const App: React.FC = () => {
@@ -115,6 +138,7 @@ const App: React.FC = () => {
     } catch { return DEFAULT_BUSINESS_SETTINGS; }
   });
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const getDefaultUnit = (s: BusinessSettings) => {
     if (s.customUnits && s.customUnits.length > 0) {
@@ -221,6 +245,8 @@ const App: React.FC = () => {
     return sid;
   };
 
+  const migrationDoneRef = useRef(false);
+
   // --- Authentication Listener (Non-blocking Fast Startup) ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -249,18 +275,31 @@ const App: React.FC = () => {
             const now = Date.now();
             const sessionId = `${currentUser.uid}-${now}`;
             const currentSid = getOrInitSessionId();
-
-            const isLegacy = isLegacyGlobalAccount(currentUser);
-            const defaultBizId = isLegacy ? 'global' : currentUser.uid;
+            const defaultBizId = currentUser.uid;
 
             if (!profileSnap.exists()) {
+              // Check if another profile was renamed to this email (e.g. Presha Flex workspace m7j5w1qzFVgDhMg0GjK9vWOpLFf1)
+              let matchedBizId = defaultBizId;
+              let matchedDisplayName = currentUser.email?.split('@')[0] || '';
+              let matchedBizName = currentUser.email?.split('@')[0] || '';
+              try {
+                const allProfSnap = await getDocs(collection(db, 'userProfiles'));
+                const existingMatch = allProfSnap.docs.find(d => d.id !== currentUser.uid && d.data().email?.toLowerCase() === currentUser.email?.toLowerCase());
+                if (existingMatch) {
+                  const matchData = existingMatch.data();
+                  matchedBizId = matchData.businessId || existingMatch.id;
+                  matchedDisplayName = matchData.displayName || matchedDisplayName;
+                  matchedBizName = matchData.businessName || matchedBizName;
+                }
+              } catch { /* fallback to defaultBizId */ }
+
               await setDoc(profileRef, {
                 uid: currentUser.uid,
                 email: currentUser.email,
-                displayName: currentUser.email?.split('@')[0] || '',
+                displayName: matchedDisplayName,
                 status: 'active',
-                businessId: defaultBizId,
-                businessName: isLegacy ? 'SJBGU Store' : (currentUser.email?.split('@')[0] || ''),
+                businessId: matchedBizId,
+                businessName: matchedBizName,
                 role: 'owner',
                 maxAllowedSessions: 1,
                 activeSessions: [{ id: currentSid, device: deviceStr, lastActive: now }],
@@ -293,8 +332,8 @@ const App: React.FC = () => {
                 activeSessionId: currentSid,
                 activeSessionDevice: deviceStr
               };
-              if (isLegacy && (!data.businessId || data.businessId !== 'global')) {
-                updates.businessId = 'global';
+              if (data.businessId === 'global' || !data.businessId) {
+                updates.businessId = currentUser.uid;
               }
               // Use setDoc merge instead of updateDoc — more resilient to edge cases
               await setDoc(profileRef, updates, { merge: true });
@@ -325,6 +364,10 @@ const App: React.FC = () => {
     const unsubProfile = onSnapshot(doc(db, 'userProfiles', user.uid), async (docSnap) => {
       if (docSnap.exists()) {
         const profileData = docSnap.data() as UserProfile;
+        if (profileData.businessId === 'global' || !profileData.businessId) {
+          profileData.businessId = user.uid;
+          updateDoc(doc(db, 'userProfiles', user.uid), { businessId: user.uid }).catch(() => {});
+        }
         setUserProfile(profileData);
 
         // If the snapshot came from local cache (not confirmed by server),
@@ -391,44 +434,124 @@ const App: React.FC = () => {
 
     setDataLoading(true);
 
-    const isLegacy = isLegacyGlobalAccount(user);
-    const isGlobalPath = isLegacy || userProfile?.businessId === 'global';
-    const workspaceId = userProfile?.businessId || user.uid;
+    const targetBizId = (userProfile?.businessId && userProfile.businessId !== 'global') ? userProfile.businessId : user.uid;
 
-    const settingsRef = isGlobalPath
-      ? doc(db, 'settings', 'general')
-      : doc(db, 'users', workspaceId, 'settings', 'general');
+    const settingsRef = doc(db, 'users', targetBizId, 'settings', 'general');
+    const productsQuery = query(collection(db, 'users', targetBizId, 'products'));
+    const customersQuery = query(collection(db, 'users', targetBizId, 'customers'));
+    const invoicesQuery = query(collection(db, 'users', targetBizId, 'invoices'), limit(1000));
 
-    const productsQuery = isGlobalPath
-      ? query(collection(db, 'products'))
-      : query(collection(db, 'users', workspaceId, 'products'));
+    // One-Time Safe Migration from users/global and root collections into users/{targetBizId}/
+    if (!migrationDoneRef.current && user.uid) {
+      migrationDoneRef.current = true;
+      (async () => {
+        try {
+          console.log(`[CONSOLIDATION_MIGRATION] Starting migration into users/${targetBizId}/...`);
 
-    const customersQuery = isGlobalPath
-      ? query(collection(db, 'customers'))
-      : query(collection(db, 'users', workspaceId, 'customers'));
+          // A. Migrate from users/global/ (if created)
+          try {
+            const gSettingsSnap = await getDoc(doc(db, 'users', 'global', 'settings', 'general'));
+            if (gSettingsSnap.exists()) {
+              const gData = gSettingsSnap.data();
+              if (gData && !isPlaceholderSetting(gData as any)) {
+                await setDoc(doc(db, 'users', targetBizId, 'settings', 'general'), sanitizeForFirestore(gData), { merge: true });
+              }
+              await deleteDoc(doc(db, 'users', 'global', 'settings', 'general')).catch(() => {});
+            }
 
-    const invoicesQuery = isGlobalPath
-      ? query(collection(db, 'invoices'), limit(1000))
-      : query(collection(db, 'users', workspaceId, 'invoices'), limit(1000));
+            const gProdSnap = await getDocs(collection(db, 'users', 'global', 'products'));
+            for (const pDoc of gProdSnap.docs) {
+              await setDoc(doc(db, 'users', targetBizId, 'products', pDoc.id), sanitizeForFirestore(pDoc.data()), { merge: true });
+              await deleteDoc(pDoc.ref).catch(() => {});
+            }
 
-    // 1. Settings Listener
+            const gCustSnap = await getDocs(collection(db, 'users', 'global', 'customers'));
+            for (const cDoc of gCustSnap.docs) {
+              await setDoc(doc(db, 'users', targetBizId, 'customers', cDoc.id), sanitizeForFirestore(cDoc.data()), { merge: true });
+              await deleteDoc(cDoc.ref).catch(() => {});
+            }
+
+            const gInvSnap = await getDocs(collection(db, 'users', 'global', 'invoices'));
+            for (const iDoc of gInvSnap.docs) {
+              await setDoc(doc(db, 'users', targetBizId, 'invoices', iDoc.id), sanitizeForFirestore(iDoc.data()), { merge: true });
+              await deleteDoc(iDoc.ref).catch(() => {});
+            }
+          } catch (e: any) {
+            console.log('[CONSOLIDATION_MIGRATION] users/global check:', e.message);
+          }
+
+          // B. Migrate from Root collections (customers, products, invoices, settings)
+          try {
+            const rootProdSnap = await getDocs(collection(db, 'products'));
+            if (rootProdSnap.size > 0) {
+              for (const pDoc of rootProdSnap.docs) {
+                await setDoc(doc(db, 'users', targetBizId, 'products', pDoc.id), sanitizeForFirestore(pDoc.data()), { merge: true });
+                await deleteDoc(pDoc.ref).catch(() => {});
+              }
+              console.log(`[CONSOLIDATION_MIGRATION] Migrated and cleaned up ${rootProdSnap.size} root products.`);
+            }
+
+            const rootCustSnap = await getDocs(collection(db, 'customers'));
+            if (rootCustSnap.size > 0) {
+              for (const cDoc of rootCustSnap.docs) {
+                await setDoc(doc(db, 'users', targetBizId, 'customers', cDoc.id), sanitizeForFirestore(cDoc.data()), { merge: true });
+                await deleteDoc(cDoc.ref).catch(() => {});
+              }
+              console.log(`[CONSOLIDATION_MIGRATION] Migrated and cleaned up ${rootCustSnap.size} root customers.`);
+            }
+
+            const rootInvSnap = await getDocs(collection(db, 'invoices'));
+            if (rootInvSnap.size > 0) {
+              for (const iDoc of rootInvSnap.docs) {
+                await setDoc(doc(db, 'users', targetBizId, 'invoices', iDoc.id), sanitizeForFirestore(iDoc.data()), { merge: true });
+                await deleteDoc(iDoc.ref).catch(() => {});
+              }
+              console.log(`[CONSOLIDATION_MIGRATION] Migrated and cleaned up ${rootInvSnap.size} root invoices.`);
+            }
+
+            const rootSettingsSnap = await getDoc(doc(db, 'settings', 'general'));
+            if (rootSettingsSnap.exists()) {
+              const rData = rootSettingsSnap.data();
+              if (rData && !isPlaceholderSetting(rData as any)) {
+                await setDoc(doc(db, 'users', targetBizId, 'settings', 'general'), sanitizeForFirestore(rData), { merge: true });
+              }
+              await deleteDoc(doc(db, 'settings', 'general')).catch(() => {});
+            }
+          } catch (e: any) {
+            console.log('[CONSOLIDATION_MIGRATION] Root collection cleanup:', e.message);
+          }
+
+          console.log('[CONSOLIDATION_MIGRATION] Migration & cleanup finished successfully.');
+        } catch (err: any) {
+          console.warn('[CONSOLIDATION_MIGRATION] Error:', err.message);
+        }
+      })();
+    }
+
+    // 1. Settings Listener — purely reactive, NO automatic overwriting
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
         const loadedSettings = { ...DEFAULT_BUSINESS_SETTINGS, ...docSnap.data() } as BusinessSettings;
         setSettings(loadedSettings);
         setTempSettings(loadedSettings);
+        setPermissionError(null);
         try { localStorage.setItem('cached_settings', JSON.stringify(loadedSettings)); } catch {}
       } else {
-        setDoc(settingsRef, DEFAULT_BUSINESS_SETTINGS).catch(err => console.warn('Settings setDoc warning:', err));
+        setSettings(DEFAULT_BUSINESS_SETTINGS);
+        setTempSettings(DEFAULT_BUSINESS_SETTINGS);
       }
     }, (err) => {
       console.warn('Settings snapshot listener error:', err.message);
+      if (err.message.includes('permissions') || err.code === 'permission-denied') {
+        setPermissionError(`Your logged-in account (${user.email || user.uid}) lacks Firestore permissions.`);
+      }
     });
 
     // 2. Products Listener
     const unsubProducts = onSnapshot(productsQuery, (snapshot) => {
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
+      setPermissionError(null);
       try { localStorage.setItem('cached_products', JSON.stringify(prods)); } catch {}
     }, (err) => {
       console.warn('Products snapshot listener error:', err.message);
@@ -438,6 +561,7 @@ const App: React.FC = () => {
     const unsubCustomers = onSnapshot(customersQuery, (snapshot) => {
       const custs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
       setCustomers(custs);
+      setPermissionError(null);
       try { localStorage.setItem('cached_customers', JSON.stringify(custs)); } catch {}
     }, (err) => {
       console.warn('Customers snapshot listener error:', err.message);
@@ -448,10 +572,14 @@ const App: React.FC = () => {
       const invs = snapshot.docs.map(doc => ({ ...doc.data() } as Invoice));
       setInvoices(invs);
       setDataLoading(false);
+      setPermissionError(null);
       try { localStorage.setItem('cached_invoices', JSON.stringify(invs)); } catch {}
     }, (err) => {
       console.warn('Invoices snapshot listener error:', err.message);
       setDataLoading(false);
+      if (err.message.includes('permissions') || err.code === 'permission-denied') {
+        setPermissionError(`Firebase Security Rules are blocking access for logged-in user: ${user.email || user.uid}.`);
+      }
     });
 
     return () => {
@@ -461,6 +589,27 @@ const App: React.FC = () => {
       unsubInvoices();
     };
   }, [user, userProfile?.businessId]);
+
+  // Auto-heal nextInvoiceNumber if existing invoices in database exceed current setting
+  useEffect(() => {
+    if (!invoices || invoices.length === 0) return;
+    let maxId = 0;
+    invoices.forEach(inv => {
+      const cleanStr = (inv.id || '').toString().replace(/[^0-9]/g, '');
+      const num = parseInt(cleanStr, 10);
+      if (!isNaN(num) && num > maxId) {
+        maxId = num;
+      }
+    });
+
+    if (maxId >= (settings.nextInvoiceNumber || 1)) {
+      const correctNext = maxId + 1;
+      setSettings(prev => ({ ...prev, nextInvoiceNumber: correctNext }));
+      if (user) {
+        updateDoc(getSettingsRef(), { nextInvoiceNumber: correctNext }).catch(() => {});
+      }
+    }
+  }, [invoices, settings.nextInvoiceNumber, user]);
 
   const handleClaimSession = async () => {
     if (!user) return;
@@ -644,18 +793,23 @@ const App: React.FC = () => {
     setHasUnsavedChanges(false);
     setHasUnsavedSettings(false);
     setEditingInvoice(null);
+    try {
+      localStorage.removeItem('cached_products');
+      localStorage.removeItem('cached_customers');
+      localStorage.removeItem('cached_invoices');
+      localStorage.removeItem('cached_settings');
+    } catch {}
   };
 
   // --- Data Operations (Firestore) ---
 
-  // Target Firestore Path Helpers (Supports Shared Business Workspaces & Legacy Root Data)
+  // Target Firestore Path Helpers (Uniform Per-User/Workspace Collections)
   const getWorkspaceId = () => (userProfile?.businessId || user?.uid || '');
-  const isUseGlobal = () => isLegacyGlobalAccount(user) || (userProfile?.businessId === 'global');
 
-  const getSettingsRef = () => isUseGlobal() ? doc(db, 'settings', 'general') : doc(db, 'users', getWorkspaceId(), 'settings', 'general');
-  const getProductsCol = () => isUseGlobal() ? collection(db, 'products') : collection(db, 'users', getWorkspaceId(), 'products');
-  const getCustomersCol = () => isUseGlobal() ? collection(db, 'customers') : collection(db, 'users', getWorkspaceId(), 'customers');
-  const getInvoicesCol = () => isUseGlobal() ? collection(db, 'invoices') : collection(db, 'users', getWorkspaceId(), 'invoices');
+  const getSettingsRef = () => doc(db, 'users', getWorkspaceId(), 'settings', 'general');
+  const getProductsCol = () => collection(db, 'users', getWorkspaceId(), 'products');
+  const getCustomersCol = () => collection(db, 'users', getWorkspaceId(), 'customers');
+  const getInvoicesCol = () => collection(db, 'users', getWorkspaceId(), 'invoices');
 
   // Helper: strip undefined values from objects before Firestore writes.
   // Firestore throws "Unsupported field value: undefined" if any field is undefined.
@@ -693,13 +847,33 @@ const App: React.FC = () => {
       const isEditing = editingInvoice && editingInvoice.id === invoice.id;
       const invCol = getInvoicesCol();
       const settingsRef = getSettingsRef();
+
+      if (!isEditing) {
+        // Prevent duplicate Bill No collision and accidental overwriting of existing invoices
+        const isDuplicate = invoices.some(inv => inv.id === invoice.id);
+        if (isDuplicate) {
+          let maxId = 0;
+          invoices.forEach(inv => {
+            const cleanStr = (inv.id || '').toString().replace(/[^0-9]/g, '');
+            const num = parseInt(cleanStr, 10);
+            if (!isNaN(num) && num > maxId) {
+              maxId = num;
+            }
+          });
+          const safeId = (maxId + 1).toString();
+          console.warn(`Bill #${invoice.id} already exists! Reassigning to Bill #${safeId} to prevent overwriting.`);
+          invoice.id = safeId;
+        }
+      }
+
       const cleanInvoice = sanitizeForFirestore(invoice);
 
       if (isEditing) {
         await setDoc(doc(invCol, invoice.id), cleanInvoice);
         logUserActivity('invoice', 'Edit Invoice', `Updated Bill #${invoice.id} (₹${invoice.total})`);
       } else {
-        const nextNo = (settings.nextInvoiceNumber || 0) + 1;
+        const numFromId = parseInt((invoice.id || '').toString().replace(/[^0-9]/g, ''), 10);
+        const nextNo = Math.max((settings.nextInvoiceNumber || 0) + 1, !isNaN(numFromId) ? numFromId + 1 : 1);
 
         // Save the invoice document first
         await setDoc(doc(invCol, invoice.id), cleanInvoice);
@@ -810,10 +984,21 @@ const compressImageToMaxDataUrl = (
         settingsToSave.signatureUrl = await compressImageToMaxDataUrl(settingsToSave.signatureUrl, 600, 300, 0.8);
       }
 
-      await setDoc(getSettingsRef(), settingsToSave);
+      const cleanSettings = sanitizeForFirestore(settingsToSave);
+
+      // Save to primary target reference
+      await setDoc(getSettingsRef(), cleanSettings);
+
+      // Mirror to user's direct path to ensure schema resilience across updates
+      if (user.uid) {
+        await setDoc(doc(db, 'users', user.uid, 'settings', 'general'), cleanSettings, { merge: true }).catch(() => {});
+        await updateDoc(doc(db, 'userProfiles', user.uid), { businessName: settingsToSave.name || '' }).catch(() => {});
+      }
+
       setSettings(settingsToSave);
       setTempSettings(settingsToSave);
       setHasUnsavedSettings(false);
+      try { localStorage.setItem('cached_settings', JSON.stringify(settingsToSave)); } catch {}
       alert('Settings saved successfully!');
     } catch (e) {
       console.error("Error saving settings: ", e);
@@ -1217,6 +1402,13 @@ const compressImageToMaxDataUrl = (
     );
   }
 
+  // Check if AI Business Analysis permission is enabled for current user/business
+  const hasAiAnalyticsPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+    ? (settings.analyticsVisibility?.showAiBusinessAnalyst !== false)
+    : (userProfile?.analyticsPermissions?.showAiBusinessAnalyst !== false);
+
+  const analyticsMenuTitle = hasAiAnalyticsPermission ? 'AI Analytics' : 'Analytics';
+
   // --- Render Main App ---
   return (
     <div className="flex h-screen bg-slate-100 text-slate-900 font-sans overflow-hidden">
@@ -1256,11 +1448,20 @@ const compressImageToMaxDataUrl = (
             <History className="w-5 h-5" /> Invoice History
           </button>
 
+          {isPaymentTrackingActive && (
+            <button
+              onClick={() => handleTabChange(AppTab.PAYMENTS)}
+              className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PAYMENTS ? 'bg-red-600 text-white' : 'hover:bg-slate-800'}`}
+            >
+              <Wallet className="w-5 h-5" /> Payments
+            </button>
+          )}
+
           <button
             onClick={() => handleTabChange(AppTab.ANALYTICS)}
             className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.ANALYTICS ? 'bg-red-600 text-white' : 'hover:bg-slate-800'}`}
           >
-            <BarChart3 className="w-5 h-5" /> AI Analytics
+            <BarChart3 className="w-5 h-5" /> {analyticsMenuTitle}
           </button>
 
           <button
@@ -1295,7 +1496,7 @@ const compressImageToMaxDataUrl = (
         </nav>
 
         <div className="p-4 border-t border-slate-800">
-          <div className="text-xs text-slate-500 mb-2 truncate px-2">{user.email}</div>
+          <div className="text-xs text-slate-500 mb-2 truncate px-2">{userProfile?.email || user.email}</div>
           <button onClick={handleLogout} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors w-full px-2">
             <LogOut className="w-5 h-5" /> Logout
           </button>
@@ -1325,7 +1526,10 @@ const compressImageToMaxDataUrl = (
           <div className="hidden sm:flex gap-2">
             <button onClick={() => handleTabChange(AppTab.CREATE_BILL)} className={`p-2 rounded ${activeTab === AppTab.CREATE_BILL ? 'bg-slate-700 text-white' : 'text-slate-400'}`}><FileText size={20} /></button>
             <button onClick={() => handleTabChange(AppTab.INVOICE_HISTORY)} className={`p-2 rounded ${activeTab === AppTab.INVOICE_HISTORY ? 'bg-slate-700 text-white' : 'text-slate-400'}`}><History size={20} /></button>
-            <button onClick={() => handleTabChange(AppTab.ANALYTICS)} className={`p-2 rounded ${activeTab === AppTab.ANALYTICS ? 'bg-slate-700 text-white' : 'text-slate-400'}`}><BarChart3 size={20} /></button>
+            {isPaymentTrackingActive && (
+              <button onClick={() => handleTabChange(AppTab.PAYMENTS)} className={`p-2 rounded ${activeTab === AppTab.PAYMENTS ? 'bg-slate-700 text-white' : 'text-slate-400'}`}><Wallet size={20} /></button>
+            )}
+            <button onClick={() => handleTabChange(AppTab.ANALYTICS)} className={`p-2 rounded ${activeTab === AppTab.ANALYTICS ? 'bg-slate-700 text-white' : 'text-slate-400'}`} title={analyticsMenuTitle}><BarChart3 size={20} /></button>
             <button onClick={() => handleTabChange(AppTab.SETTINGS)} className={`p-2 rounded ${activeTab === AppTab.SETTINGS ? 'bg-slate-700 text-white' : 'text-slate-400'}`}><Settings size={20} /></button>
           </div>
         </div>
@@ -1341,8 +1545,13 @@ const compressImageToMaxDataUrl = (
             <button onClick={() => { handleTabChange(AppTab.INVOICE_HISTORY); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.INVOICE_HISTORY ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
               <History className="w-5 h-5" /> Invoice History
             </button>
+            {isPaymentTrackingActive && (
+              <button onClick={() => { handleTabChange(AppTab.PAYMENTS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PAYMENTS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
+                <Wallet className="w-5 h-5" /> Payments
+              </button>
+            )}
             <button onClick={() => { handleTabChange(AppTab.ANALYTICS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.ANALYTICS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
-              <BarChart3 className="w-5 h-5" /> AI Analytics
+              <BarChart3 className="w-5 h-5" /> {analyticsMenuTitle}
             </button>
             <button onClick={() => { handleTabChange(AppTab.PRODUCTS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PRODUCTS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
               <Package className="w-5 h-5" /> Products
@@ -1377,66 +1586,130 @@ const compressImageToMaxDataUrl = (
           </div>
         )}
 
+        {/* Permission Error Notification Banner */}
+        {permissionError && (
+          <div className="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded-xl shadow-md flex items-center justify-between gap-4 shrink-0 z-40">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-6 h-6 text-red-600 shrink-0" />
+              <div>
+                <h4 className="font-bold text-red-900 text-sm">Firebase Permission Error</h4>
+                <p className="text-xs text-red-700 mt-0.5">{permissionError}</p>
+                <p className="text-[11px] text-red-500 mt-1">Please sign out and log in with your primary admin account, or update Security Rules in Firebase Console.</p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-lg transition-colors whitespace-nowrap shadow-xs cursor-pointer"
+            >
+              Sign Out & Switch Account
+            </button>
+          </div>
+        )}
+
         {activeTab === AppTab.CREATE_BILL && (
           <div className="flex-1 min-h-0">
-            <InvoiceGenerator
-              products={products}
-              customers={customers}
-              invoices={invoices}
-              settings={settings}
-              onUpdateSettings={handleUpdateSettings}
-              onSaveInvoice={handleSaveInvoice}
-              onUnsavedChanges={(hasChanges) => setHasUnsavedChanges(hasChanges)}
-              editingInvoice={editingInvoice}
-              onClearEditingInvoice={() => setEditingInvoice(null)}
-            />
+            <ErrorBoundary fallbackTitle="Error loading Bill Creator">
+              <InvoiceGenerator
+                products={products}
+                customers={customers}
+                invoices={invoices}
+                settings={settings}
+                enablePaymentTracking={isPaymentTrackingActive}
+                onUpdateSettings={handleUpdateSettings}
+                onSaveInvoice={handleSaveInvoice}
+                onUnsavedChanges={(hasChanges) => setHasUnsavedChanges(hasChanges)}
+                editingInvoice={editingInvoice}
+                onClearEditingInvoice={() => setEditingInvoice(null)}
+              />
+            </ErrorBoundary>
           </div>
         )}
 
         {activeTab === AppTab.INVOICE_HISTORY && (
           <div className="h-full">
-            <InvoiceHistory
-              invoices={invoices}
-              settings={settings}
-              onDeleteInvoice={handleDeleteInvoice}
-              onEditInvoice={handleEditInvoice}
-              onManagePayments={handleManagePayments}
-              enablePaymentTracking={isPaymentTrackingActive}
-              csvImportAllowed={!!userProfile?.csvImportAllowed}
-              onImportInvoices={handleImportInvoices}
-            />
+            <ErrorBoundary fallbackTitle="Error loading Invoice History">
+              <InvoiceHistory
+                invoices={invoices}
+                customers={customers}
+                settings={settings}
+                onDeleteInvoice={handleDeleteInvoice}
+                onEditInvoice={handleEditInvoice}
+                onManagePayments={handleManagePayments}
+                enablePaymentTracking={isPaymentTrackingActive}
+                csvImportAllowed={!!userProfile?.csvImportAllowed}
+                onImportInvoices={handleImportInvoices}
+              />
+            </ErrorBoundary>
           </div>
         )}
 
+        {activeTab === AppTab.PAYMENTS && isPaymentTrackingActive && (
+          <ErrorBoundary fallbackTitle="Error loading Payment Management">
+            <PaymentManagement
+              invoices={invoices}
+              customers={customers}
+              settings={settings}
+              onManagePayments={handleManagePayments}
+              onDeletePayment={handleDeletePayment}
+            />
+          </ErrorBoundary>
+        )}
+
         {activeTab === AppTab.ANALYTICS && (
-          <AnalyticsDashboard
-            invoices={invoices}
-            products={products}
-            customers={customers}
-            onAiRequest={handleAiRequest}
-            enablePaymentTracking={isPaymentTrackingActive}
-          />
+          <ErrorBoundary fallbackTitle="Error loading Analytics Dashboard">
+            <AnalyticsDashboard
+              invoices={invoices}
+              products={products}
+              customers={customers}
+              settings={{
+                ...settings,
+                analyticsVisibility: {
+                  showProductAnalysis: (userProfile?.role === 'admin' || isMainAdminUser(user))
+                    ? (settings.analyticsVisibility?.showProductAnalysis !== false)
+                    : (userProfile?.analyticsPermissions?.showProductAnalysis !== false),
+                  showCustomerAnalysis: (userProfile?.role === 'admin' || isMainAdminUser(user))
+                    ? (settings.analyticsVisibility?.showCustomerAnalysis !== false)
+                    : (userProfile?.analyticsPermissions?.showCustomerAnalysis !== false),
+                  showCustomerPurchaseDetails: (userProfile?.role === 'admin' || isMainAdminUser(user))
+                    ? (settings.analyticsVisibility?.showCustomerPurchaseDetails !== false)
+                    : (userProfile?.analyticsPermissions?.showCustomerPurchaseDetails !== false),
+                  showAiBusinessAnalyst: (userProfile?.role === 'admin' || isMainAdminUser(user))
+                    ? (settings.analyticsVisibility?.showAiBusinessAnalyst !== false)
+                    : (userProfile?.analyticsPermissions?.showAiBusinessAnalyst !== false),
+                }
+              }}
+              onAiRequest={handleAiRequest}
+              enablePaymentTracking={isPaymentTrackingActive}
+            />
+          </ErrorBoundary>
         )}
 
         {activeTab === AppTab.ADMIN_PORTAL && isMainAdminUser(user) && (
-          <AdminPortal />
+          <ErrorBoundary fallbackTitle="Error loading Admin Portal">
+            <AdminPortal />
+          </ErrorBoundary>
         )}
 
         {activeTab === AppTab.PRODUCTS && (
           <div className="h-full flex flex-col overflow-hidden">
             <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
               {/* Header */}
-              <div className="p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-red-50 to-orange-50 flex justify-between items-center shrink-0">
-                <div>
-                  <h2 className="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
-                    <Package className="w-6 h-6 text-red-600" />
-                    Products
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">Manage your product catalog</p>
+              <div className="p-3 sm:p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-red-50 to-orange-50 flex justify-between items-center shrink-0 gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Package className="w-5 h-5 sm:w-6 sm:h-6 text-red-600 shrink-0" />
+                    <h2 className="text-lg sm:text-2xl font-bold text-slate-800 truncate">
+                      Products
+                    </h2>
+                    <span className="sm:hidden bg-white px-2 py-0.5 rounded-full text-xs font-black text-red-600 border border-slate-200 shadow-2xs shrink-0">
+                      {products.length}
+                    </span>
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 truncate">Manage your product catalog</p>
                 </div>
-                <div className="bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-200">
-                  <div className="text-2xl font-bold text-red-600">{products.length}</div>
-                  <div className="text-[10px] text-slate-500 uppercase font-bold">Items</div>
+                <div className="hidden sm:block bg-white px-3 py-1.5 rounded-lg shadow-sm border border-slate-200 text-center shrink-0">
+                  <div className="text-xl md:text-2xl font-bold text-red-600 leading-none">{products.length}</div>
+                  <div className="text-[9px] text-slate-500 uppercase font-bold mt-0.5">Items</div>
                 </div>
               </div>
 
@@ -1640,29 +1913,39 @@ const compressImageToMaxDataUrl = (
 
         {activeTab === AppTab.CUSTOMERS && (
           <div className="h-full flex flex-col overflow-hidden">
-            <div className="max-w-6xl mx-auto w-full bg-white md:rounded-2xl shadow-sm border-0 md:border border-slate-200/80 flex flex-col h-full overflow-hidden">
-              {/* Responsive Compact Header */}
-              <div className="px-3.5 py-2.5 sm:px-5 sm:py-3 border-b border-slate-200 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white flex justify-between items-center shrink-0 shadow-sm">
-                <div>
-                  <h2 className="text-base sm:text-xl font-bold flex items-center gap-2 tracking-tight">
-                    <Users className="w-5 h-5 text-blue-200" />
-                    Customers
-                    <span className="bg-white/20 backdrop-blur-xs text-white text-xs font-extrabold px-2 py-0.5 rounded-full ml-1 border border-white/20">
+            <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
+              {/* Header */}
+              <div className="p-3 sm:p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-red-50 to-orange-50 flex justify-between items-center shrink-0 gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-5 h-5 sm:w-6 sm:h-6 text-red-600 shrink-0" />
+                    <h2 className="text-lg sm:text-2xl font-bold text-slate-800 truncate">
+                      Customers
+                    </h2>
+                    <span className="bg-white px-2 py-0.5 rounded-full text-xs font-black text-red-600 border border-slate-200 shadow-2xs shrink-0">
                       {customers.length}
                     </span>
-                  </h2>
-                  <p className="text-[11px] text-blue-100/80 mt-0.5 font-medium hidden sm:block">Manage your customer database & insights</p>
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 truncate">
+                    Manage your customer database & insights
+                  </p>
                 </div>
 
-                {/* Mobile Toggle Button for Add Form */}
-                <button
-                  type="button"
-                  onClick={() => setShowCustomerFormMobile(prev => !prev)}
-                  className="md:hidden bg-white/20 hover:bg-white/30 border border-white/30 text-white font-semibold text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs active:scale-95 cursor-pointer"
-                >
-                  <UserPlus size={14} />
-                  <span>{showCustomerFormMobile || editingCustomerId ? 'Close Form' : '+ Add Customer'}</span>
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="hidden sm:block bg-white px-3 py-1.5 rounded-lg shadow-sm border border-slate-200 text-center">
+                    <div className="text-xl md:text-2xl font-bold text-red-600 leading-none">{customers.length}</div>
+                    <div className="text-[9px] text-slate-500 uppercase font-bold mt-0.5">Total</div>
+                  </div>
+                  {/* Mobile Toggle Button for Add Form */}
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomerFormMobile(prev => !prev)}
+                    className="md:hidden bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-xs active:scale-95 cursor-pointer whitespace-nowrap"
+                  >
+                    <UserPlus size={14} />
+                    <span>{showCustomerFormMobile || editingCustomerId ? 'Close' : '+ Add'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Form Section - Single Row on Desktop, Compact/Collapsible on Mobile */}
@@ -1670,7 +1953,7 @@ const compressImageToMaxDataUrl = (
                 ref={customerFormRef}
                 className={`${
                   showCustomerFormMobile || editingCustomerId ? 'block' : 'hidden md:block'
-                } p-3 sm:p-4 border-b border-slate-200 bg-slate-50/90 shrink-0 transition-all`}
+                } p-3 sm:p-4 border-b border-slate-200 bg-slate-50 shrink-0 transition-all`}
               >
                 <form onSubmit={handleCustomerSubmit} className="space-y-2.5 md:space-y-0">
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-2.5 items-center">
@@ -1683,7 +1966,7 @@ const compressImageToMaxDataUrl = (
                         placeholder="Customer Name *"
                         value={custForm.name}
                         onChange={e => setCustForm({ ...custForm, name: e.target.value })}
-                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-1 focus:ring-red-500 focus:border-red-500 bg-white outline-none transition-all placeholder:text-slate-400"
                       />
                     </div>
 
@@ -1695,7 +1978,7 @@ const compressImageToMaxDataUrl = (
                         placeholder="City"
                         value={custForm.city}
                         onChange={e => setCustForm({ ...custForm, city: e.target.value })}
-                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-1 focus:ring-red-500 focus:border-red-500 bg-white outline-none transition-all placeholder:text-slate-400"
                       />
                     </div>
 
@@ -1707,7 +1990,7 @@ const compressImageToMaxDataUrl = (
                         placeholder="Phone Number"
                         value={custForm.phone}
                         onChange={e => setCustForm({ ...custForm, phone: e.target.value })}
-                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white outline-none transition-all placeholder:text-slate-400"
+                        className="w-full pl-9 pr-2.5 py-1.5 sm:py-2 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-1 focus:ring-red-500 focus:border-red-500 bg-white outline-none transition-all placeholder:text-slate-400"
                       />
                     </div>
 
@@ -1717,7 +2000,7 @@ const compressImageToMaxDataUrl = (
                         <>
                           <button
                             type="submit"
-                            className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-1.5 sm:py-2 px-3 rounded-lg text-xs sm:text-sm transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 sm:py-2 px-3 rounded-lg text-xs sm:text-sm transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                             title="Update Customer"
                           >
                             <Save size={15} />
@@ -1735,7 +2018,7 @@ const compressImageToMaxDataUrl = (
                       ) : (
                         <button
                           type="submit"
-                          className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-1.5 sm:py-2 px-4 rounded-lg text-xs sm:text-sm transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 sm:py-2 px-4 rounded-lg text-xs sm:text-sm transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                           title="Add Customer"
                         >
                           <UserPlus size={15} />
@@ -1756,7 +2039,7 @@ const compressImageToMaxDataUrl = (
                     placeholder="Search by name, city, or phone..."
                     value={customerSearchQuery}
                     onChange={e => setCustomerSearchQuery(e.target.value)}
-                    className="w-full pl-8 pr-7 py-1.5 border border-slate-200 rounded-lg text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50 outline-none transition-all placeholder:text-slate-400"
+                    className="w-full pl-8 pr-7 py-1.5 border border-slate-300 rounded-lg text-xs sm:text-sm focus:ring-1 focus:ring-red-500 focus:border-red-500 bg-white outline-none transition-all placeholder:text-slate-400"
                   />
                   {customerSearchQuery && (
                     <button
@@ -2001,9 +2284,9 @@ const compressImageToMaxDataUrl = (
           <div className="h-full flex flex-col overflow-hidden">
             <div className="max-w-4xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
               {/* Header */}
-              <div className="px-4 py-3 md:p-5 border-b border-slate-200 bg-gradient-to-r from-purple-50 to-pink-50 shrink-0">
+              <div className="px-4 py-3 md:p-5 border-b border-slate-200 bg-gradient-to-r from-red-50 to-orange-50 shrink-0">
                 <h2 className="text-lg md:text-2xl font-bold text-slate-800 flex items-center gap-2">
-                  <Settings className="w-5 h-5 md:w-6 md:h-6 text-purple-600" />
+                  <Settings className="w-5 h-5 md:w-6 md:h-6 text-red-600" />
                   Business Settings
                 </h2>
                 <p className="text-[11px] md:text-xs text-slate-500 mt-0.5">Configure branding, units, invoices & tax</p>
@@ -2013,8 +2296,8 @@ const compressImageToMaxDataUrl = (
               <div className="border-b border-slate-200 bg-slate-50 px-1.5 sm:px-4 md:px-6 pt-1.5 sm:pt-3 shrink-0">
                 <div className="grid grid-cols-4 gap-0.5 sm:gap-1">
                   {[
-                    { key: 'branding' as const, icon: <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-600" />, label: 'Branding', fullLabel: 'Branding & Header' },
-                    { key: 'units' as const, icon: <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />, label: 'Units', fullLabel: 'Product Units' },
+                    { key: 'branding' as const, icon: <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-600" />, label: 'Branding', fullLabel: 'Branding & Header' },
+                    { key: 'units' as const, icon: <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-orange-600" />, label: 'Units', fullLabel: 'Product Units' },
                     { key: 'billing' as const, icon: <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600" />, label: 'Invoice', fullLabel: 'Invoice & Signature' },
                     { key: 'tax_bank' as const, icon: <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />, label: 'Tax/Bank', fullLabel: 'Tax, Bank & UPI' },
                   ].map(tab => (
@@ -2024,7 +2307,7 @@ const compressImageToMaxDataUrl = (
                       onClick={() => setSettingsSubTab(tab.key)}
                       className={`py-2 sm:py-2.5 px-1 sm:px-4 rounded-t-lg font-bold text-[10px] sm:text-sm flex items-center justify-center gap-1 sm:gap-2 border-b-2 transition-all whitespace-nowrap cursor-pointer ${
                         settingsSubTab === tab.key
-                          ? 'border-purple-600 text-purple-700 bg-white shadow-sm'
+                          ? 'border-red-600 text-red-700 bg-white shadow-sm'
                           : 'border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-100'
                       }`}
                     >
@@ -2819,6 +3102,7 @@ const compressImageToMaxDataUrl = (
           </div>
         </div>
       )}
+
     </div>
   );
 };

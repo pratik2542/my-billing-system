@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { Invoice, BusinessSettings } from '../types';
-import { Search, Calendar, Eye, X, Printer, Download, Upload, Edit, Trash2, Wallet, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { InvoiceTemplate } from './InvoiceTemplate';
+import { Invoice, BusinessSettings, Customer } from '../types';
+import { Search, Calendar, Eye, X, Printer, Download, Upload, Edit, Trash2, Wallet, History, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { InvoiceTemplate, formatBillNum } from './InvoiceTemplate';
 import { PaymentStatusBadge } from './PaymentTrackerModal';
 import { InvoiceImportModal } from './InvoiceImportModal';
 
 interface InvoiceHistoryProps {
   invoices: Invoice[];
+  customers?: Customer[];
   settings: BusinessSettings;
   onDeleteInvoice?: (invoiceId: string) => void;
   onEditInvoice?: (invoice: Invoice) => void;
@@ -26,6 +27,7 @@ const getPaymentStatus = (inv: Invoice): 'unpaid' | 'partial' | 'paid' => {
 
 export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
   invoices,
+  customers,
   settings,
   onDeleteInvoice,
   onEditInvoice,
@@ -88,13 +90,63 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
       };
     }
   }, [viewingInvoice]);
+  // Map customer names to phone numbers from saved customers directory
+  const customerPhoneMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (customers || []).forEach(c => {
+      if (c.name && c.phone) {
+        map.set(c.name.trim().toLowerCase(), c.phone.trim());
+      }
+    });
+    return map;
+  }, [customers]);
+
+  // Helper to extract phone number for an invoice (checks invoice fields & customer directory)
+  const getInvoicePhone = useCallback((inv: Invoice): string => {
+    if (inv.customerMobile && inv.customerMobile.trim()) return inv.customerMobile.trim();
+    if ((inv as any).customerPhone && (inv as any).customerPhone.trim()) return (inv as any).customerPhone.trim();
+    if ((inv as any).phone && (inv as any).phone.trim()) return (inv as any).phone.trim();
+    if ((inv as any).mobile && (inv as any).mobile.trim()) return (inv as any).mobile.trim();
+    if (inv.customerName && inv.customerName.trim()) {
+      const match = customerPhoneMap.get(inv.customerName.trim().toLowerCase());
+      if (match) return match;
+    }
+    return '';
+  }, [customerPhoneMap]);
 
   const filteredInvoices = useMemo(() => {
-    // Reset to page 1 whenever filter changes (side-effect via dependency)
+    const term = searchTerm.trim().toLowerCase();
+    const cleanTerm = term.replace(/[^0-9]/g, '');
+
     return invoices.filter(invoice => {
-      const matchesSearch =
-        invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        invoice.id.toLowerCase().includes(searchTerm.toLowerCase());
+      let matchesSearch = true;
+
+      if (term) {
+        // 1. Bill No match
+        const matchId = invoice.id.toLowerCase().includes(term);
+
+        // 2. Customer Name match
+        const matchName = invoice.customerName.toLowerCase().includes(term);
+
+        // 3. Customer City match
+        const matchCity = !!(invoice.customerCity && invoice.customerCity.toLowerCase().includes(term));
+
+        // 4. Mobile / Phone match (direct substring & clean digit-only match)
+        const rawPhone = getInvoicePhone(invoice);
+        let matchPhone = false;
+        if (rawPhone) {
+          if (rawPhone.toLowerCase().includes(term)) {
+            matchPhone = true;
+          } else if (cleanTerm.length >= 3) {
+            const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
+            if (cleanPhone.includes(cleanTerm)) {
+              matchPhone = true;
+            }
+          }
+        }
+
+        matchesSearch = matchId || matchName || matchCity || matchPhone;
+      }
 
       let matchesDate = true;
       if (startDate || endDate) {
@@ -112,7 +164,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
           }
           if (endDate) {
             const end = new Date(endDate);
-            end.setHours(0, 0, 0, 0);
+            end.setHours(23, 59, 59, 999);
             if (invDate > end) matchesDate = false;
           }
         }
@@ -123,7 +175,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
       // Sort by Bill No descending (assuming string number)
       return parseInt(b.id) - parseInt(a.id);
     });
-  }, [invoices, searchTerm, startDate, endDate]);
+  }, [invoices, searchTerm, getInvoicePhone, startDate, endDate]);
 
   // Reset page when filters change
   useEffect(() => { resetPage(); }, [searchTerm, startDate, endDate, resetPage]);
@@ -238,13 +290,13 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
     <div className="h-full flex flex-col overflow-hidden">
       <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <div className="p-3 sm:p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-indigo-50 to-purple-50 flex flex-row items-center justify-between gap-2 shrink-0">
+        <div className="p-3 sm:p-4 md:p-5 border-b border-slate-200 bg-gradient-to-r from-red-50 to-orange-50 flex flex-row items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <Search className="w-5 h-5 text-indigo-600 shrink-0" />
+            <History className="w-5 h-5 sm:w-6 sm:h-6 text-red-600 shrink-0" />
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <h2 className="text-base sm:text-xl md:text-2xl font-bold text-slate-800 truncate">Invoice History</h2>
-                <span className="bg-indigo-100 text-indigo-700 text-xs font-black px-2 py-0.5 rounded-full border border-indigo-200 shrink-0">
+                <span className="bg-white px-2.5 py-0.5 rounded-full text-xs font-black text-red-600 border border-slate-200 shadow-2xs shrink-0">
                   {filteredInvoices.length}
                 </span>
               </div>
@@ -353,15 +405,21 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                       </div>
                       <h3 className="font-bold text-slate-900">{inv.customerName}</h3>
                       <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
-                        {inv.customerCity}
+                        <span>{inv.customerCity || 'N/A'}</span>
                       </p>
+                      {getInvoicePhone(inv) && (
+                        <p className="text-xs text-slate-500 font-normal flex items-center gap-1 mt-0.5">
+                          <span>📞</span>
+                          <span>{getInvoicePhone(inv)}</span>
+                        </p>
+                      )}
                     </div>
                     <div className="text-right">
-                      <div className="text-xl font-bold text-indigo-600">₹{inv.total}</div>
+                      <div className="text-xl font-bold text-indigo-600">₹{formatBillNum(inv.total)}</div>
                       <div className="text-xs text-slate-500">{inv.items.length} items</div>
                       {enablePaymentTracking && (
                         <div className="mt-1">
@@ -439,7 +497,20 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                     <tr className="hover:bg-slate-50 transition-colors">
                       <td className="p-4 font-bold text-slate-700">#{inv.id}</td>
                       <td className="p-4 text-slate-500">{inv.date}</td>
-                      <td className="p-4 font-medium">{inv.customerName} <span className="text-xs text-slate-400">({inv.customerCity})</span></td>
+                      <td className="p-4 font-medium">
+                        <div className="font-bold text-slate-800">
+                          {inv.customerName}
+                          {inv.customerCity && (
+                            <span className="text-xs text-slate-400 font-normal ml-1">({inv.customerCity})</span>
+                          )}
+                        </div>
+                        {getInvoicePhone(inv) && (
+                          <div className="text-xs text-slate-500 font-normal flex items-center gap-1 mt-0.5">
+                            <span>📞</span>
+                            <span>{getInvoicePhone(inv)}</span>
+                          </div>
+                        )}
+                      </td>
                       <td className="p-4 text-right">
                         <div className="text-sm text-slate-600">
                           {inv.items.length === 0 && <span className="text-xs text-slate-400">No items</span>}
@@ -450,7 +521,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                           )}
                         </div>
                       </td>
-                      <td className="p-4 text-right font-bold text-slate-900">₹{inv.total}</td>
+                      <td className="p-4 text-right font-bold text-slate-900">₹{formatBillNum(inv.total)}</td>
                       {enablePaymentTracking && (
                         <td className="p-4 text-center">
                           <PaymentStatusBadge status={getPaymentStatus(inv)} />
@@ -629,9 +700,11 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                     date={viewingInvoice.date}
                     customerName={viewingInvoice.customerName}
                     customerCity={viewingInvoice.customerCity}
+                    customerMobile={getInvoicePhone(viewingInvoice)}
                     items={viewingInvoice.items}
                     settings={settings}
                     gstRate={viewingInvoice.gstRate}
+                    payments={viewingInvoice.payments}
                   />
                 </div>
               </div>

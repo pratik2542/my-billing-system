@@ -35,6 +35,13 @@ export interface InvoiceHeaderCustomization {
   mergedPackingQtyHeader?: string;
 }
 
+export interface AnalyticsVisibilitySettings {
+  showProductAnalysis?: boolean;
+  showCustomerAnalysis?: boolean;
+  showCustomerPurchaseDetails?: boolean;
+  showAiBusinessAnalyst?: boolean;
+}
+
 export interface BusinessSettings {
   name: string;
   subName: string;
@@ -68,6 +75,8 @@ export interface BusinessSettings {
   nameLetterSpacing?: string;
   // Custom Invoice Table Headers
   columnHeaders?: InvoiceHeaderCustomization;
+  // Analytics & AI Visibility Toggles (Admin)
+  analyticsVisibility?: AnalyticsVisibilitySettings;
 }
 
 export type PaymentMode = 'Cash' | 'UPI' | 'Cheque' | 'Bank Transfer' | 'Other';
@@ -85,6 +94,7 @@ export interface Invoice {
   date: string;
   customerName: string;
   customerCity: string;
+  customerMobile?: string;
   items: InvoiceItem[];
   total: number;
   // GST details (optional for backward compatibility)
@@ -100,11 +110,12 @@ export interface Invoice {
 export enum AppTab {
   DASHBOARD = 'DASHBOARD',
   CREATE_BILL = 'CREATE_BILL',
+  INVOICE_HISTORY = 'INVOICE_HISTORY',
+  PAYMENTS = 'PAYMENTS',
+  ANALYTICS = 'ANALYTICS',
   PRODUCTS = 'PRODUCTS',
   CUSTOMERS = 'CUSTOMERS',
   SETTINGS = 'SETTINGS',
-  INVOICE_HISTORY = 'INVOICE_HISTORY',
-  ANALYTICS = 'ANALYTICS',
   ADMIN_PORTAL = 'ADMIN_PORTAL'
 }
 
@@ -120,6 +131,7 @@ export interface UserProfile {
   businessId?: string;
   businessName?: string;
   role?: 'owner' | 'member' | 'admin';
+  analyticsPermissions?: AnalyticsVisibilitySettings;
   activeSessionId?: string;
   activeSessionDevice?: string;
   createdAt: number;

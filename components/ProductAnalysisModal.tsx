@@ -1605,9 +1605,11 @@ export const ProductAnalysisModal: React.FC<ProductAnalysisModalProps> = ({
                   date={viewingInvoice.date}
                   customerName={viewingInvoice.customerName}
                   customerCity={viewingInvoice.customerCity}
+                  customerMobile={viewingInvoice.customerMobile}
                   items={viewingInvoice.items}
                   settings={settings || { businessName: 'INVOICE', address: '', phone: '', email: '', gstNo: '' }}
                   gstRate={viewingInvoice.gstRate}
+                  payments={viewingInvoice.payments}
                 />
               </div>
             </div>

@@ -8,7 +8,7 @@ import {
   Users, ShieldCheck, Activity, AlertTriangle, UserPlus, Lock, Unlock, RefreshCw, Loader2, X,
   Smartphone, Monitor, Tablet, Clock, Sparkles, Bug, BarChart3, CheckCircle2, Eye, Building,
   Upload, Download, KeyRound, Edit, Mail, Calendar, TrendingUp, DollarSign, PieChart, Layers,
-  Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard
+  Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard, Trash2
 } from "lucide-react";
 
 // ---- Helpers ----
@@ -244,6 +244,12 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
   const isMainAdmin = profile.email?.toLowerCase() === "admin_billing@pratik.ca";
+  const [analyticsPermissions, setAnalyticsPermissions] = useState({
+    showProductAnalysis: profile.analyticsPermissions?.showProductAnalysis !== false,
+    showCustomerAnalysis: profile.analyticsPermissions?.showCustomerAnalysis !== false,
+    showCustomerPurchaseDetails: profile.analyticsPermissions?.showCustomerPurchaseDetails !== false,
+    showAiBusinessAnalyst: profile.analyticsPermissions?.showAiBusinessAnalyst !== false,
+  });
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -267,6 +273,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
       const updates: any = {
         displayName: trimmedName,
         businessName: trimmedBiz || trimmedName,
+        analyticsPermissions,
       };
       if (!isMainAdmin) {
         updates.email = trimmedEmail;
@@ -335,15 +342,70 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
                 </p>
               </div>
             ) : (
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="user@example.com"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-medium"
-              />
+              <div>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-medium"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  💡 <strong>Note:</strong> Updates account details in Firestore database. To change the login credentials in Firebase Auth, update the user in <span className="font-semibold text-indigo-600">Firebase Console &gt; Authentication &gt; Users</span>.
+                </p>
+              </div>
             )}
+          </div>
+
+          {/* Admin Analytics & AI Permissions for User */}
+          <div className="bg-purple-50 p-3 rounded-xl border border-purple-200 space-y-2 mt-2">
+            <div className="flex items-center gap-1.5 border-b border-purple-200 pb-1.5">
+              <Sparkles size={14} className="text-purple-600 shrink-0" />
+              <span className="text-xs font-bold text-slate-800">Analytics & AI Permissions for User</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-purple-100 cursor-pointer hover:bg-purple-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={analyticsPermissions.showProductAnalysis}
+                  onChange={(e) => setAnalyticsPermissions(prev => ({ ...prev, showProductAnalysis: e.target.checked }))}
+                  className="accent-purple-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">Product Analysis</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-purple-100 cursor-pointer hover:bg-purple-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={analyticsPermissions.showCustomerAnalysis}
+                  onChange={(e) => setAnalyticsPermissions(prev => ({ ...prev, showCustomerAnalysis: e.target.checked }))}
+                  className="accent-purple-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">Customer Analysis</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-purple-100 cursor-pointer hover:bg-purple-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={analyticsPermissions.showCustomerPurchaseDetails}
+                  onChange={(e) => setAnalyticsPermissions(prev => ({ ...prev, showCustomerPurchaseDetails: e.target.checked }))}
+                  className="accent-purple-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">Purchase Details</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-purple-100 cursor-pointer hover:bg-purple-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={analyticsPermissions.showAiBusinessAnalyst}
+                  onChange={(e) => setAnalyticsPermissions(prev => ({ ...prev, showAiBusinessAnalyst: e.target.checked }))}
+                  className="accent-purple-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">AI Business Analyst</span>
+              </label>
+            </div>
           </div>
 
           {error && <p className="text-xs text-red-600 flex items-center gap-1"><AlertTriangle size={12}/> {error}</p>}
@@ -646,6 +708,7 @@ export const AdminPortal: React.FC = () => {
   const [togglingPaymentId, setTogglingPaymentId] = useState<string | null>(null);
   const [togglingCsvId, setTogglingCsvId] = useState<string | null>(null);
   const [updatingMaxSessionsId, setUpdatingMaxSessionsId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [preselectedBusinessId, setPreselectedBusinessId] = useState<string | undefined>(undefined);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -871,6 +934,25 @@ export const AdminPortal: React.FC = () => {
     setShowAddUser(true);
   };
 
+  const handleDeleteUser = async (profile: UserProfile) => {
+    if (profile.email?.toLowerCase() === "admin_billing@pratik.ca") {
+      alert("Main admin profile cannot be deleted.");
+      return;
+    }
+    const name = profile.displayName || profile.email;
+    if (!window.confirm(`Are you sure you want to remove the profile for "${name}" (${profile.email}) from the Admin Portal?\n\nNote: This removes the profile entry from Firestore.`)) {
+      return;
+    }
+    setDeletingId(profile.uid);
+    try {
+      await deleteDoc(doc(db, "userProfiles", profile.uid));
+    } catch {
+      alert("Failed to delete user profile from Firestore.");
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const totalAiRequests = enrichedProfiles.reduce((s, p) => s + (p.aiRequestCount || 0), 0);
   const totalErrors = allErrors.length || enrichedProfiles.reduce((s, p) => s + (p.errorCount || 0), 0);
   const activeUsersCount = enrichedProfiles.filter((p) => p.status === "active").length;
@@ -926,10 +1008,12 @@ export const AdminPortal: React.FC = () => {
               togglingPaymentId={togglingPaymentId}
               togglingCsvId={togglingCsvId}
               updatingMaxSessionsId={updatingMaxSessionsId}
+              deletingId={deletingId}
               onToggleBlock={toggleBlockUser}
               onTogglePaymentBlock={togglePaymentBlockUser}
               onToggleCsvImport={toggleCsvImportUser}
               onUpdateMaxSessions={updateMaxSessions}
+              onDeleteUser={handleDeleteUser}
               onViewUser={setSelectedUser}
               onEditUser={setEditingUser}
             />
@@ -953,13 +1037,15 @@ const UsersTabContent: React.FC<{
   togglingPaymentId: string | null;
   togglingCsvId: string | null;
   updatingMaxSessionsId: string | null;
+  deletingId: string | null;
   onToggleBlock: (p: UserProfile) => void;
   onTogglePaymentBlock: (p: UserProfile) => void;
   onToggleCsvImport: (p: UserProfile) => void;
   onUpdateMaxSessions: (p: UserProfile, max: number) => void;
+  onDeleteUser: (p: UserProfile) => void;
   onViewUser: (p: UserProfile) => void;
   onEditUser: (p: UserProfile) => void;
-}> = ({ profiles, togglingId, togglingPaymentId, togglingCsvId, updatingMaxSessionsId, onToggleBlock, onTogglePaymentBlock, onToggleCsvImport, onUpdateMaxSessions, onViewUser, onEditUser }) => (
+}> = ({ profiles, togglingId, togglingPaymentId, togglingCsvId, updatingMaxSessionsId, deletingId, onToggleBlock, onTogglePaymentBlock, onToggleCsvImport, onUpdateMaxSessions, onDeleteUser, onViewUser, onEditUser }) => (
   <div>
     <div className="hidden md:block overflow-x-auto">
       <table className="w-full text-left text-sm">
@@ -1048,6 +1134,16 @@ const UsersTabContent: React.FC<{
                   className={`p-2 rounded-full disabled:opacity-50 ${p.status === "active" ? "bg-red-100 hover:bg-red-200 text-red-700" : "bg-green-100 hover:bg-green-200 text-green-700"}`}>
                   {togglingId === p.uid ? <Loader2 size={14} className="animate-spin"/> : p.status === "active" ? <Lock size={14}/> : <Unlock size={14}/>}
                 </button>
+                {p.email?.toLowerCase() !== "admin_billing@pratik.ca" && (
+                  <button
+                    onClick={() => onDeleteUser(p)}
+                    disabled={deletingId === p.uid}
+                    title="Remove User Profile from Firestore"
+                    className="p-2 rounded-full bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-50"
+                  >
+                    {deletingId === p.uid ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  </button>
+                )}
               </div></td>
             </tr>
           ))}
@@ -1103,6 +1199,16 @@ const UsersTabContent: React.FC<{
             <button onClick={() => onToggleBlock(p)} disabled={togglingId === p.uid} className={`flex-1 py-2 rounded-lg text-xs font-bold ${p.status === "active" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
               {togglingId === p.uid ? <Loader2 size={12} className="animate-spin"/> : p.status === "active" ? "Deactivate" : "Activate"}
             </button>
+            {p.email?.toLowerCase() !== "admin_billing@pratik.ca" && (
+              <button
+                onClick={() => onDeleteUser(p)}
+                disabled={deletingId === p.uid}
+                className="py-2 px-2.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-red-100 text-slate-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                title="Remove Profile"
+              >
+                {deletingId === p.uid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              </button>
+            )}
           </div>
         </div>
       ))}
