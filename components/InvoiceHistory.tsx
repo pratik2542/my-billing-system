@@ -580,8 +580,17 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                           <div className="grid gap-2">
                             {inv.items.map(it => (
                               <div key={it.id} className="flex justify-between text-sm text-slate-700">
-                                <div className="truncate">{it.name} x {it.quantity} <span className="text-xs text-slate-400">({it.packing || it.unit})</span></div>
-                                <div className="text-right">₹{it.rate} &nbsp; | &nbsp; ₹{it.amount}</div>
+                                <div className="truncate">
+                                  <span className="font-semibold text-slate-800">{it.name}</span> &times; {it.quantity} {it.unit}
+                                  {it.packing && (
+                                    <span className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 ml-2 font-medium">
+                                      {settings.columnHeaders?.packingHeader || 'Packing'}: {it.packing}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-right text-xs font-semibold text-slate-600">
+                                  Rate: ₹{formatBillNum(it.rate)} &nbsp;|&nbsp; Amount: <span className="text-slate-900 font-bold">₹{formatBillNum(it.amount)}</span>
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -705,6 +714,8 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                     settings={settings}
                     gstRate={viewingInvoice.gstRate}
                     payments={viewingInvoice.payments}
+                    showUnitInItemsTable={viewingInvoice.showUnitInItemsTable}
+                    customTotalQtyText={viewingInvoice.customTotalQtyText}
                   />
                 </div>
               </div>

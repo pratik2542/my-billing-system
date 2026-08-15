@@ -26,7 +26,13 @@ import {
   Phone,
   PhoneCall,
   Sparkles,
-  Wallet
+  Wallet,
+  Type,
+  CheckCircle2,
+  Check,
+  Sliders,
+  Palette,
+  Eye
 } from 'lucide-react';
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { InvoiceHistory } from './components/InvoiceHistory';
@@ -45,9 +51,18 @@ import {
   Invoice,
   PaymentEntry,
   UserProfile,
-  ActivityCategory
+  ActivityCategory,
+  BillFontStyle,
+  BillFontScope,
+  BillFontWeight
 } from './types';
-import { DEFAULT_BUSINESS_SETTINGS, DEFAULT_PRODUCT_UNITS, DEFAULT_COLUMN_HEADERS } from './constants';
+import {
+  DEFAULT_BUSINESS_SETTINGS,
+  DEFAULT_PRODUCT_UNITS,
+  DEFAULT_COLUMN_HEADERS,
+  BILL_FONT_OPTIONS,
+  getBillFontFamily
+} from './constants';
 
 // Firebase Imports
 import { db, auth } from './firebase';
@@ -444,7 +459,8 @@ const App: React.FC = () => {
           customUnits: Array.isArray(data.customUnits) ? data.customUnits : DEFAULT_BUSINESS_SETTINGS.customUnits,
           columnHeaders: {
             ...DEFAULT_COLUMN_HEADERS,
-            ...(data.columnHeaders || {})
+            ...(data.columnHeaders || {}),
+            totalQuantityCustomText: ''
           },
           analyticsVisibility: {
             ...DEFAULT_BUSINESS_SETTINGS.analyticsVisibility,
@@ -539,9 +555,11 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Payment Tracking Feature Flag ---
+  // --- Feature & Menu Permissions (Admin Controlled) ---
   const isPaymentTrackingAllowed = !userProfile?.paymentTrackingBlocked;
   const isPaymentTrackingActive = isPaymentTrackingAllowed && (settings.enablePaymentTracking !== false);
+  const isProductsMenuAllowed = isMainAdminUser(user) || !userProfile?.productsMenuBlocked;
+  const isCustomersMenuAllowed = isMainAdminUser(user) || !userProfile?.customersMenuBlocked;
 
   // --- Update Document Title and Favicon ---
   useEffect(() => {
@@ -592,6 +610,15 @@ const App: React.FC = () => {
 
   // --- Navigation Guard ---
   const handleTabChange = (tab: AppTab) => {
+    if (tab === AppTab.PRODUCTS && !isProductsMenuAllowed) {
+      alert("The Products catalog menu has been disabled for your account by Admin.");
+      return;
+    }
+    if (tab === AppTab.CUSTOMERS && !isCustomersMenuAllowed) {
+      alert("The Customers directory menu has been disabled for your account by Admin.");
+      return;
+    }
+
     if (activeTab === AppTab.CREATE_BILL && (hasUnsavedChanges || editingInvoice) && tab !== AppTab.CREATE_BILL) {
       const message = editingInvoice 
         ? "You are currently editing an invoice. Are you sure you want to leave? Your changes will be lost."
@@ -804,10 +831,18 @@ const App: React.FC = () => {
 
   const handleUpdateSettings = async (newSettings: BusinessSettings) => {
     if (!user) return;
-    setSettings(newSettings);
-    setTempSettings(newSettings);
+    const sanitizedSettings: BusinessSettings = {
+      ...newSettings,
+      columnHeaders: {
+        ...DEFAULT_COLUMN_HEADERS,
+        ...(newSettings.columnHeaders || {}),
+        totalQuantityCustomText: ''
+      }
+    };
+    setSettings(sanitizedSettings);
+    setTempSettings(sanitizedSettings);
     try {
-      await setDoc(getSettingsRef(), newSettings);
+      await setDoc(getSettingsRef(), sanitizeForFirestore(sanitizedSettings));
       logUserActivity('settings', 'Update Settings', 'Updated business profile and configuration');
     } catch (e) {
       console.error("Error saving settings: ", e);
@@ -848,7 +883,7 @@ const compressImageToMaxDataUrl = (
 
       try {
         let compressed = canvas.toDataURL('image/webp', quality);
-        if (!compressed.startsWith('data:image/webp')) {
+        if (!compressed.startsWith('image/webp')) {
           compressed = canvas.toDataURL('image/png');
         }
         resolve(compressed);
@@ -877,7 +912,14 @@ const compressImageToMaxDataUrl = (
     if (!user) return;
     setIsSavingSettings(true);
     try {
-      let settingsToSave = { ...tempSettings };
+      let settingsToSave = {
+        ...tempSettings,
+        columnHeaders: {
+          ...DEFAULT_COLUMN_HEADERS,
+          ...(tempSettings.columnHeaders || {}),
+          totalQuantityCustomText: ''
+        }
+      };
 
       // Compress logo & signature to ensure total document size is well under 1MB Firestore limit
       if (settingsToSave.logoUrl && settingsToSave.logoUrl.length > 100000) {
@@ -1384,19 +1426,23 @@ const compressImageToMaxDataUrl = (
             <BarChart3 className="w-5 h-5" /> {analyticsMenuTitle}
           </button>
 
-          <button
-            onClick={() => handleTabChange(AppTab.PRODUCTS)}
-            className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PRODUCTS ? 'bg-red-600 text-white' : 'hover:bg-slate-800'}`}
-          >
-            <Package className="w-5 h-5" /> Products
-          </button>
+          {isProductsMenuAllowed && (
+            <button
+              onClick={() => handleTabChange(AppTab.PRODUCTS)}
+              className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PRODUCTS ? 'bg-red-600 text-white' : 'hover:bg-slate-800'}`}
+            >
+              <Package className="w-5 h-5" /> Products
+            </button>
+          )}
 
-          <button
-            onClick={() => handleTabChange(AppTab.CUSTOMERS)}
-            className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.CUSTOMERS ? 'bg-red-600 text-white' : 'hover:bg-slate-800'}`}
-          >
-            <Users className="w-5 h-5" /> Customers
-          </button>
+          {isCustomersMenuAllowed && (
+            <button
+              onClick={() => handleTabChange(AppTab.CUSTOMERS)}
+              className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.CUSTOMERS ? 'bg-red-600 text-white' : 'hover:bg-slate-800'}`}
+            >
+              <Users className="w-5 h-5" /> Customers
+            </button>
+          )}
 
           <button
             onClick={() => handleTabChange(AppTab.SETTINGS)}
@@ -1473,12 +1519,16 @@ const compressImageToMaxDataUrl = (
             <button onClick={() => { handleTabChange(AppTab.ANALYTICS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.ANALYTICS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
               <BarChart3 className="w-5 h-5" /> {analyticsMenuTitle}
             </button>
-            <button onClick={() => { handleTabChange(AppTab.PRODUCTS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PRODUCTS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
-              <Package className="w-5 h-5" /> Products
-            </button>
-            <button onClick={() => { handleTabChange(AppTab.CUSTOMERS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.CUSTOMERS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
-              <Users className="w-5 h-5" /> Customers
-            </button>
+            {isProductsMenuAllowed && (
+              <button onClick={() => { handleTabChange(AppTab.PRODUCTS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.PRODUCTS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
+                <Package className="w-5 h-5" /> Products
+              </button>
+            )}
+            {isCustomersMenuAllowed && (
+              <button onClick={() => { handleTabChange(AppTab.CUSTOMERS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.CUSTOMERS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
+                <Users className="w-5 h-5" /> Customers
+              </button>
+            )}
             <button onClick={() => { handleTabChange(AppTab.SETTINGS); setMobileMenuOpen(false); }} className={`flex items-center gap-3 w-full p-3 rounded-lg transition-colors ${activeTab === AppTab.SETTINGS ? 'bg-red-600 text-white' : 'hover:bg-slate-100'}`}>
               <Settings className="w-5 h-5" /> Settings
             </button>
@@ -1602,7 +1652,7 @@ const compressImageToMaxDataUrl = (
           </ErrorBoundary>
         )}
 
-        {activeTab === AppTab.PRODUCTS && (
+        {activeTab === AppTab.PRODUCTS && isProductsMenuAllowed && (
           <div className="h-full flex flex-col overflow-hidden">
             <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
               {/* Header */}
@@ -1827,7 +1877,7 @@ const compressImageToMaxDataUrl = (
           </div>
         )}
 
-        {activeTab === AppTab.CUSTOMERS && (
+        {activeTab === AppTab.CUSTOMERS && isCustomersMenuAllowed && (
           <div className="h-full flex flex-col overflow-hidden">
             <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
               {/* Header */}
@@ -2225,7 +2275,7 @@ const compressImageToMaxDataUrl = (
                       key={tab.key}
                       type="button"
                       onClick={() => setSettingsSubTab(tab.key)}
-                      className={`py-2 sm:py-2.5 px-1 sm:px-4 rounded-t-lg font-bold text-[10px] sm:text-sm flex items-center justify-center gap-1 sm:gap-2 border-b-2 transition-all whitespace-nowrap cursor-pointer ${
+                      className={`py-2 sm:py-2.5 px-1 sm:px-3 rounded-t-lg font-bold text-[10px] sm:text-xs md:text-sm flex items-center justify-center gap-1 sm:gap-1.5 border-b-2 transition-all whitespace-nowrap cursor-pointer ${
                         settingsSubTab === tab.key
                           ? 'border-red-600 text-red-700 bg-white shadow-sm'
                           : 'border-transparent text-slate-500 hover:text-slate-900 hover:bg-slate-100'
@@ -2533,6 +2583,216 @@ const compressImageToMaxDataUrl = (
                   {/* SUB-TAB 3: Invoice & Signature */}
                   {settingsSubTab === 'billing' && (
                     <div className="space-y-4 sm:space-y-6">
+                      {/* Bill Item & Customer Font Style Settings */}
+                      <div className="bg-gradient-to-br from-indigo-50/60 via-white to-purple-50/40 p-3 sm:p-5 rounded-2xl border border-indigo-200/90 shadow-xs">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 sm:mb-4">
+                          <div>
+                            <h3 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                              <Type className="w-5 h-5 text-indigo-600 shrink-0" />
+                              Bill Item & Customer Font Style
+                            </h3>
+                            <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
+                              Choose the typography for customer details, items table, and amounts. Specially curated fonts that look completely natural and unedited.
+                            </p>
+                          </div>
+                          <span className="self-start sm:self-auto bg-indigo-100 text-indigo-800 text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                            Authentic Look
+                          </span>
+                        </div>
+
+                        {/* Font Selection Cards Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 sm:gap-3 mb-4">
+                          {BILL_FONT_OPTIONS.map((font) => {
+                            const isSelected = (tempSettings.billFont || 'crimson-serif') === font.id;
+                            return (
+                              <button
+                                key={font.id}
+                                type="button"
+                                onClick={() => handleTempSettingsChange({ ...tempSettings, billFont: font.id })}
+                                className={`text-left p-3 sm:p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                                  isSelected
+                                    ? 'border-indigo-600 bg-indigo-50/60 ring-2 ring-indigo-500/20 shadow-xs'
+                                    : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50/80 shadow-2xs'
+                                }`}
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${
+                                        isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-300 bg-white'
+                                      }`}>
+                                        {isSelected && <Check size={10} strokeWidth={3} />}
+                                      </div>
+                                      <span className="font-bold text-xs sm:text-sm text-slate-800 truncate">{font.name}</span>
+                                    </div>
+                                    <span className={`text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                      isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                                    }`}>
+                                      {font.badge}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-slate-500 line-clamp-1 mb-2">{font.description}</p>
+                                </div>
+
+                                {/* Font Preview Chip */}
+                                <div
+                                  className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200/90 text-slate-900 text-xs truncate shadow-2xs mt-auto font-medium"
+                                  style={{ fontFamily: font.fontFamily }}
+                                >
+                                  {font.exampleCustomer} • {font.exampleItem}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Font Scope & Weight Controls */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                          {/* Font Scope */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200">
+                            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                              <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                              Font Application Scope
+                            </label>
+                            <select
+                              value={tempSettings.billFontScope || 'items_and_customer'}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, billFontScope: e.target.value as BillFontScope })}
+                              className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold bg-white text-slate-800 cursor-pointer outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="items_and_customer">Items, Customer & Amounts Only (Stationery Bill Look)</option>
+                              <option value="entire_bill">Entire Invoice Body (Uniform Modern Software)</option>
+                            </select>
+                            <p className="text-[10px] text-slate-500 mt-1">
+                              {(tempSettings.billFontScope || 'items_and_customer') === 'items_and_customer'
+                                ? 'Keeps company header in classic format while items and customer info use selected font.'
+                                : 'Applies the chosen font family uniformly across the entire invoice.'}
+                            </p>
+                          </div>
+
+                          {/* Ink Weight */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200">
+                            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                              <Palette className="w-3.5 h-3.5 text-indigo-600" />
+                              Ink Weight / Darkness
+                            </label>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {(['normal', 'medium', 'bold'] as const).map(w => (
+                                <button
+                                  key={w}
+                                  type="button"
+                                  onClick={() => handleTempSettingsChange({ ...tempSettings, billFontWeight: w })}
+                                  className={`py-1.5 px-2 rounded-lg text-xs font-bold border text-center capitalize transition-all cursor-pointer ${
+                                    (tempSettings.billFontWeight || 'medium') === w
+                                      ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-2xs'
+                                      : 'border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600'
+                                  }`}
+                                >
+                                  {w}
+                                </button>
+                              ))}
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-1">
+                              Adjusts the printed thickness of item descriptions and customer details.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Live Interactive Invoice Typography Preview */}
+                        <div className="bg-white p-3 sm:p-4 rounded-xl border-2 border-dashed border-indigo-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest flex items-center gap-1">
+                              <Eye size={12} />
+                              Live Bill Typography Preview
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-400">
+                              Font: {BILL_FONT_OPTIONS.find(f => f.id === (tempSettings.billFont || 'crimson-serif'))?.name || 'Classic'}
+                            </span>
+                          </div>
+
+                          <div
+                            className="bg-white p-3 rounded-lg border shadow-xs"
+                            style={{
+                              borderColor: tempSettings.themeColor || '#dc2626',
+                              fontFamily: tempSettings.billFontScope === 'entire_bill'
+                                ? getBillFontFamily(tempSettings.billFont)
+                                : undefined
+                            }}
+                          >
+                            {/* Mini Header */}
+                            <div className="text-center pb-2 border-b" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
+                              <div className="font-bold text-base" style={{ color: tempSettings.themeColor || '#dc2626' }}>
+                                {tempSettings.name || 'PRINT WORKS'}
+                              </div>
+                            </div>
+
+                            {/* Meta & Customer Row */}
+                            <div className="py-2 border-b flex justify-between text-xs" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
+                              <div>
+                                <span className="font-bold mr-1" style={{ color: tempSettings.themeColor || '#dc2626' }}>M/s.</span>
+                                <span
+                                  className={`text-slate-900 ${
+                                    tempSettings.billFontWeight === 'bold' ? 'font-bold' : tempSettings.billFontWeight === 'normal' ? 'font-normal' : 'font-medium'
+                                  }`}
+                                  style={tempSettings.billFontScope !== 'entire_bill' ? { fontFamily: getBillFontFamily(tempSettings.billFont) } : undefined}
+                                >
+                                  Shreeji Trading Co. (Rajkot) Ph: 98765 43210
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-bold mr-1" style={{ color: tempSettings.themeColor || '#dc2626' }}>Bill No:</span>
+                                <span
+                                  className="text-slate-900 font-semibold"
+                                  style={tempSettings.billFontScope !== 'entire_bill' ? { fontFamily: getBillFontFamily(tempSettings.billFont) } : undefined}
+                                >
+                                  1042
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Sample Items Table */}
+                            <div className="text-xs">
+                              <div className="flex bg-slate-50 font-bold py-1 px-1 border-b" style={{ color: tempSettings.themeColor || '#dc2626' }}>
+                                <div className="w-8">No.</div>
+                                <div className="flex-1">Details</div>
+                                <div className="w-20 text-center">Qty</div>
+                                <div className="w-16 text-center">Rate</div>
+                                <div className="w-20 text-right">Amount</div>
+                              </div>
+                              <div
+                                className={`divide-y divide-slate-100 ${
+                                  tempSettings.billFontWeight === 'bold' ? 'font-bold' : tempSettings.billFontWeight === 'normal' ? 'font-normal' : 'font-medium'
+                                }`}
+                                style={tempSettings.billFontScope !== 'entire_bill' ? { fontFamily: getBillFontFamily(tempSettings.billFont) } : undefined}
+                              >
+                                <div className="flex py-1 px-1 items-center">
+                                  <div className="w-8 text-slate-500">1</div>
+                                  <div className="flex-1 text-slate-800 truncate">Organic Wheat Flour 50kg</div>
+                                  <div className="w-20 text-center text-slate-800">1 Bag</div>
+                                  <div className="w-16 text-center text-slate-800">1850.00</div>
+                                  <div className="w-20 text-right font-bold text-slate-900">1850.00</div>
+                                </div>
+                                <div className="flex py-1 px-1 items-center">
+                                  <div className="w-8 text-slate-500">2</div>
+                                  <div className="flex-1 text-slate-800 truncate">Premium CTC Tea 250gm</div>
+                                  <div className="w-20 text-center text-slate-800">4 Pkt</div>
+                                  <div className="w-16 text-center text-slate-800">120.00</div>
+                                  <div className="w-20 text-right font-bold text-slate-900">480.00</div>
+                                </div>
+                              </div>
+                              <div className="flex justify-between items-center pt-2 border-t font-bold text-xs mt-1" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
+                                <span style={{ color: tempSettings.themeColor || '#dc2626' }}>Total:</span>
+                                <span
+                                  className="text-slate-900 text-sm font-black"
+                                  style={tempSettings.billFontScope !== 'entire_bill' ? { fontFamily: getBillFontFamily(tempSettings.billFont) } : undefined}
+                                >
+                                  ₹2,330.00
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
                       {/* Bill Table Column Headers & Merging Settings */}
                       <div className="bg-slate-50 p-3 sm:p-4 md:p-5 rounded-xl border border-slate-200">
                         <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-0.5 flex items-center gap-2">
@@ -2543,28 +2803,55 @@ const compressImageToMaxDataUrl = (
                           Customize column headers or merge Packing and Qty into one column.
                         </p>
 
-                        {/* Merge Packing & Qty Toggle */}
-                        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 mb-3 sm:mb-4">
-                          <label htmlFor="mergePackingAndQty" className="flex items-start gap-2.5 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              id="mergePackingAndQty"
-                              checked={tempSettings.columnHeaders?.mergePackingAndQty || false}
-                              onChange={e => handleTempSettingsChange({
-                                ...tempSettings,
-                                columnHeaders: {
-                                  ...DEFAULT_COLUMN_HEADERS,
-                                  ...tempSettings.columnHeaders,
-                                  mergePackingAndQty: e.target.checked
-                                }
-                              })}
-                              className="w-4 h-4 sm:w-5 sm:h-5 accent-purple-600 cursor-pointer mt-0.5 shrink-0"
-                            />
-                            <div>
-                              <span className="text-xs sm:text-sm font-bold text-slate-800 block">Merge Packing & Qty column</span>
-                              <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">Combines both into one column (e.g., "50 kg (2 Pcs)").</span>
-                            </div>
-                          </label>
+                        {/* Toggles */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3 sm:mb-4">
+                          {/* Merge Packing & Qty Toggle */}
+                          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200">
+                            <label htmlFor="mergePackingAndQty" className="flex items-start gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                id="mergePackingAndQty"
+                                checked={tempSettings.columnHeaders?.mergePackingAndQty || false}
+                                onChange={e => handleTempSettingsChange({
+                                  ...tempSettings,
+                                  columnHeaders: {
+                                    ...DEFAULT_COLUMN_HEADERS,
+                                    ...tempSettings.columnHeaders,
+                                    mergePackingAndQty: e.target.checked
+                                  }
+                                })}
+                                className="w-4 h-4 sm:w-5 sm:h-5 accent-purple-600 cursor-pointer mt-0.5 shrink-0"
+                              />
+                              <div>
+                                <span className="text-xs sm:text-sm font-bold text-slate-800 block">Merge Packing & Qty column</span>
+                                <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">Combines both into one column (e.g., "50 kg (2 Pcs)").</span>
+                              </div>
+                            </label>
+                          </div>
+
+                          {/* Show Unit in Rows Toggle */}
+                          <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200">
+                            <label htmlFor="showUnitInItemsTable" className="flex items-start gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                id="showUnitInItemsTable"
+                                checked={tempSettings.columnHeaders?.showUnitInItemsTable !== false}
+                                onChange={e => handleTempSettingsChange({
+                                  ...tempSettings,
+                                  columnHeaders: {
+                                    ...DEFAULT_COLUMN_HEADERS,
+                                    ...tempSettings.columnHeaders,
+                                    showUnitInItemsTable: e.target.checked
+                                  }
+                                })}
+                                className="w-4 h-4 sm:w-5 sm:h-5 accent-purple-600 cursor-pointer mt-0.5 shrink-0"
+                              />
+                              <div>
+                                <span className="text-xs sm:text-sm font-bold text-slate-800 block">Show Unit in Bill Rows</span>
+                                <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">Uncheck if column header already specifies unit (e.g., "Square feet").</span>
+                              </div>
+                            </label>
+                          </div>
                         </div>
 
                         {/* Custom Column Header Names */}
@@ -2663,6 +2950,32 @@ const compressImageToMaxDataUrl = (
                               className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
                             />
                           </div>
+                        </div>
+
+                        {/* Footer Total Quantity Toggle in Settings */}
+                        <div className="mt-3 pt-3 border-t border-slate-200">
+                          <label htmlFor="showTotalQuantityInFooter" className="flex items-start gap-2.5 cursor-pointer select-none bg-white p-3 rounded-xl border border-slate-200 w-full">
+                            <input
+                              type="checkbox"
+                              id="showTotalQuantityInFooter"
+                              checked={tempSettings.columnHeaders?.showTotalQuantityInFooter !== false}
+                              onChange={e => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: {
+                                  ...DEFAULT_COLUMN_HEADERS,
+                                  ...tempSettings.columnHeaders,
+                                  showTotalQuantityInFooter: e.target.checked
+                                }
+                              })}
+                              className="w-4 h-4 sm:w-5 sm:h-5 accent-purple-600 cursor-pointer mt-0.5 shrink-0"
+                            />
+                            <div>
+                              <span className="text-xs sm:text-sm font-bold text-slate-800 block">Show Total Quantity in Bill Footer</span>
+                              <span className="text-[11px] text-slate-500 mt-0.5 block">
+                                Automatically sums and displays the quantity total at the bottom of the bill table. You can also edit/override it on any specific bill during creation.
+                              </span>
+                            </div>
+                          </label>
                         </div>
                       </div>
 

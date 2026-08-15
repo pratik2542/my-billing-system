@@ -1,5 +1,6 @@
 import React from 'react';
 import { BusinessSettings, InvoiceItem, PaymentEntry } from '../types';
+import { getBillFontFamily } from '../constants';
 
 interface InvoiceTemplateProps {
   id: string; // The HTML ID for printing context
@@ -16,6 +17,8 @@ interface InvoiceTemplateProps {
   subtotal?: number;
   gstRate?: number;
   payments?: PaymentEntry[];
+  showUnitInItemsTable?: boolean;
+  customTotalQtyText?: string;
 }
 
 // Helper to create lighter shades for backgrounds
@@ -84,7 +87,9 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   items,
   settings,
   gstRate: propGstRate,
-  payments
+  payments,
+  showUnitInItemsTable,
+  customTotalQtyText
 }) => {
   // Calculate financials (rounded to 2 decimals)
   const calcSubtotal = Math.round(items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0) * 100) / 100;
@@ -162,6 +167,19 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const borderColor = themeColor;
   const lightBorder = hexToRgba(themeColor, 0.3);
 
+  // Typography customization
+  const billFont = settings.billFont || 'crimson-serif';
+  const billFontScope = settings.billFontScope || 'items_and_customer';
+  const billFontWeight = settings.billFontWeight || 'medium';
+  const contentFontFamily = getBillFontFamily(billFont);
+
+  // Font weight classes for dynamic elements
+  const regularWeightClass = billFontWeight === 'bold' ? 'font-bold' : billFontWeight === 'normal' ? 'font-normal' : 'font-medium';
+  const boldWeightClass = billFontWeight === 'bold' ? 'font-black' : billFontWeight === 'normal' ? 'font-semibold' : 'font-bold';
+
+  const isFullBillFont = billFontScope === 'entire_bill';
+  const contentFontStyle: React.CSSProperties = isFullBillFont ? {} : { fontFamily: contentFontFamily };
+
   // Column headers customization
   const colHeaders = settings.columnHeaders || {};
   const snHeader = colHeaders.snHeader || 'No.';
@@ -173,14 +191,51 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const mergePackingAndQty = !!colHeaders.mergePackingAndQty;
   const mergedPackingQtyHeader = colHeaders.mergedPackingQtyHeader || 'Packing / Qty';
 
+  // Unit display toggle in rows
+  const showUnit = showUnitInItemsTable !== undefined
+    ? showUnitInItemsTable
+    : (colHeaders.showUnitInItemsTable !== false);
+
+  // Footer Total Quantity calculation & custom formatting
+  const showFooterTotal = colHeaders.showTotalQuantityInFooter !== false;
+
+  const displayTotalQty = React.useMemo(() => {
+    if (!showFooterTotal) return '';
+
+    // 1. If explicit custom text is specified for this specific invoice (including empty string for 'none')
+    if (customTotalQtyText !== undefined) {
+      return customTotalQtyText;
+    }
+
+    // 2. Weight-based display (Kg / Gm) if items have grams
+    if (totalWeightDisplay !== '-') {
+      return totalWeightDisplay;
+    }
+
+    // 3. If items have same unit (e.g. 'Sq Ft', 'Pcs') and showUnit is true
+    if (items.length > 0 && totalQty > 0) {
+      const distinctUnits = Array.from(new Set(items.map(i => (i.unit || '').trim()).filter(Boolean)));
+      if (showUnit && distinctUnits.length === 1 && distinctUnits[0]) {
+        return `${formatBillQty(totalQty)} ${distinctUnits[0]}`;
+      }
+      return formatBillQty(totalQty);
+    }
+
+    return totalQty > 0 ? formatBillQty(totalQty) : '';
+  }, [showFooterTotal, customTotalQtyText, totalWeightDisplay, items, totalQty, showUnit]);
+
   return (
-    <div id={id || "invoice-template"} className="bg-white text-slate-900 font-serif-custom p-6 w-[794px] min-h-[1123px] mx-auto flex flex-col justify-between text-sm leading-relaxed border shadow-sm">
+    <div
+      id={id || "invoice-template"}
+      className={`bg-white text-slate-900 ${!isFullBillFont ? 'font-serif-custom' : ''} p-6 w-[794px] min-h-[1123px] mx-auto flex flex-col justify-between text-sm leading-relaxed border shadow-sm`}
+      style={isFullBillFont ? { fontFamily: contentFontFamily } : undefined}
+    >
       <div className="h-full flex flex-col">
         {/* Border Box */}
         <div className="border-2 flex flex-col min-h-[1050px] justify-between flex-1" style={{ borderColor: borderColor }}>
 
           {/* Header Section */}
-          <div className="border-b-2 p-4 font-serif-custom text-center relative" style={{ color: themeColor, borderColor: borderColor }}>
+          <div className={`border-b-2 p-4 ${!isFullBillFont ? 'font-serif-custom' : ''} text-center relative`} style={{ color: themeColor, borderColor: borderColor }}>
             {settings.logoUrl ? (
               <img
                 src={settings.logoUrl}
@@ -211,7 +266,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             <div className="flex-1 p-2 border-r flex items-center justify-between min-w-0" style={{ borderColor: borderColor }}>
               <div className="flex items-center truncate">
                 <span className="font-bold mr-2" style={{ color: themeColor }}>Bill No.:</span>
-                <span className="text-xl font-medium text-slate-900">{billNo}</span>
+                <span className={`text-xl ${regularWeightClass} text-slate-900`} style={contentFontStyle}>{billNo}</span>
               </div>
               {isPaidInFull && (
                 <span className="bg-emerald-100 text-emerald-800 border border-emerald-400 text-xs font-black px-2 py-0.5 rounded tracking-widest uppercase shadow-xs mr-2 shrink-0">
@@ -226,18 +281,22 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             </div>
             <div className="flex-1 p-2 flex items-center justify-end min-w-0">
               <span className="font-bold mr-2" style={{ color: themeColor }}>Date:</span>
-              <span className="text-xl font-medium text-slate-900">{date}</span>
+              <span className={`text-xl ${regularWeightClass} text-slate-900`} style={contentFontStyle}>{date}</span>
             </div>
           </div>
 
-          <div className="p-2 border-b-2 flex items-end" style={{ borderColor: borderColor }}>
-            <span className="font-bold mr-2 mb-1" style={{ color: themeColor }}>M/s.</span>
-            <div className="flex-1 border-b border-dashed text-xl font-medium text-slate-900 px-2 truncate" style={{ borderColor: lightBorder }}>
-              {customerName}
+          <div className="p-2 border-b-2 flex items-center justify-between gap-2" style={{ borderColor: borderColor }}>
+            <div className="flex items-center min-w-0 flex-1">
+              <span className="font-bold mr-2 shrink-0" style={{ color: themeColor }}>M/s.</span>
+              <div className={`flex-1 border-b border-dashed text-xl ${regularWeightClass} text-slate-900 px-2 break-words leading-tight`} style={{ borderColor: lightBorder, ...contentFontStyle }}>
+                {customerName}
+              </div>
             </div>
-            <div className="w-1/3 border-b border-dashed text-xl font-medium text-slate-900 px-2 text-center truncate" style={{ borderColor: lightBorder }}>
-              {customerCity ? `(${customerCity})` : ''} {customerMobile ? `Ph: ${customerMobile}` : ''}
-            </div>
+            {(customerCity || customerMobile) && (
+              <div className={`shrink-0 border-b border-dashed text-xl ${regularWeightClass} text-slate-900 px-2 text-right whitespace-nowrap`} style={{ borderColor: lightBorder, ...contentFontStyle }}>
+                {customerCity ? `(${customerCity}) ` : ''}{customerMobile ? `Ph: ${customerMobile}` : ''}
+              </div>
+            )}
           </div>
 
           {/* Table Header */}
@@ -260,30 +319,32 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
           <div className="flex-1 flex flex-col">
             {items.map((item, index) => (
               <div key={item.id} className="flex border-b" style={{ borderColor: lightBorder }}>
-                <div className="w-10 p-1 text-center border-r flex items-center justify-center text-slate-800 shrink-0" style={{ borderColor: borderColor }}>
+                <div className={`w-10 p-1 text-center border-r flex items-center justify-center text-slate-800 shrink-0 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
                   {index + 1}
                 </div>
-                <div className="flex-1 p-1 pl-3 text-left border-r text-lg text-slate-800 font-medium truncate min-w-0" style={{ borderColor: borderColor }}>
+                <div className={`flex-1 p-1 pl-3 text-left border-r text-lg text-slate-800 ${regularWeightClass} break-words leading-snug min-w-0 flex items-center`} style={{ borderColor: borderColor, ...contentFontStyle }}>
                   {item.name}
                 </div>
                 {mergePackingAndQty ? (
-                  <div className="w-40 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center truncate shrink-0 px-1" style={{ borderColor: borderColor }}>
-                    {item.packing ? `${item.packing} (${formatBillQty(item.quantity)} ${item.unit})` : `${formatBillQty(item.quantity)} ${item.unit}`}
+                  <div className={`w-40 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center break-words leading-snug shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
+                    {item.packing
+                      ? `${item.packing} (${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''})`
+                      : `${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''}`}
                   </div>
                 ) : (
                   <>
-                    <div className="w-24 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center truncate shrink-0 px-1" style={{ borderColor: borderColor }}>
+                    <div className={`w-24 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center break-words leading-snug shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
                       {item.packing || '-'}
                     </div>
-                    <div className="w-16 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center truncate shrink-0 px-1" style={{ borderColor: borderColor }}>
-                      {formatBillQty(item.quantity)} {item.unit}
+                    <div className={`w-16 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
+                      {formatBillQty(item.quantity)}{showUnit && item.unit ? ` ${item.unit}` : ''}
                     </div>
                   </>
                 )}
-                <div className="w-20 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={{ borderColor: borderColor }}>
+                <div className={`w-20 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
                   {formatBillNum(item.rate)}
                 </div>
-                <div className="w-32 p-1 text-center text-lg font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1">
+                <div className={`w-32 p-1 text-center text-lg ${boldWeightClass} text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1`} style={contentFontStyle}>
                   {formatBillNum(item.amount)}
                 </div>
               </div>
@@ -316,11 +377,11 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                 <div className="flex-1 border-r text-right p-1 pr-4 font-bold min-w-0" style={{ borderColor: borderColor, color: themeColor }}>
                   Subtotal
                 </div>
-                <div className="w-40 border-r text-center p-1 font-bold text-slate-900 flex items-center justify-center shrink-0 px-1" style={{ borderColor: borderColor }}>
-                  {totalWeightDisplay !== '-' ? totalWeightDisplay : formatBillQty(totalQty)}
+                <div className="w-40 border-r text-center p-1 font-bold text-slate-900 flex items-center justify-center shrink-0 px-1" style={{ borderColor: borderColor, ...contentFontStyle }}>
+                  {displayTotalQty}
                 </div>
                 <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1">
+                <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
                   ₹{formatBillNum(calcSubtotal)}
                 </div>
               </div>
@@ -336,7 +397,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                   </div>
                   <div className="w-40 border-r shrink-0" style={{ borderColor: borderColor }}></div>
                   <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1">
+                  <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
                     ₹{formatBillNum(calcCgst)}
                   </div>
                 </div>
@@ -347,7 +408,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                   </div>
                   <div className="w-40 border-r shrink-0" style={{ borderColor: borderColor }}></div>
                   <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1">
+                  <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
                     ₹{formatBillNum(calcSgst)}
                   </div>
                 </div>
@@ -360,12 +421,12 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
               <div className="flex-1 border-r text-right p-1 pr-4 font-bold text-lg min-w-0" style={{ borderColor: borderColor, color: themeColor }}>
                 {isGstEnabled ? 'Grand Total' : 'Total'}
               </div>
-              {/* If GST is NOT enabled, show the weight summary here. If GST IS enabled, we showed it in subtotal to avoid clutter */}
-              <div className="w-40 border-r text-center p-1 font-bold text-lg text-slate-900 flex items-center justify-center leading-tight whitespace-pre-line shrink-0 px-1" style={{ borderColor: borderColor }}>
-                {!isGstEnabled ? (totalWeightDisplay !== '-' ? totalWeightDisplay : formatBillQty(totalQty)) : ''}
+              {/* If GST is NOT enabled, show the weight/quantity summary here */}
+              <div className="w-40 border-r text-center p-1 font-bold text-lg text-slate-900 flex items-center justify-center leading-tight whitespace-pre-line shrink-0 px-1" style={{ borderColor: borderColor, ...contentFontStyle }}>
+                {!isGstEnabled ? displayTotalQty : ''}
               </div>
               <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-              <div className="w-32 text-center p-1 font-bold text-lg text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1">
+              <div className="w-32 text-center p-1 font-bold text-lg text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
                 ₹{formatBillNum(totalAmount)}
               </div>
             </div>
@@ -381,7 +442,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                 {/* Amount In Words */}
                 <div className="p-2 border-b flex-1" style={{ borderColor: lightBorder }}>
                   <span className="font-bold text-sm block mb-1" style={{ color: themeColor }}>Amount Chargeable (in words):</span>
-                  <span className="font-bold italic text-slate-900 break-words">{amountInWords}</span>
+                  <span className="font-bold italic text-slate-900 break-words" style={contentFontStyle}>{amountInWords}</span>
                 </div>
 
                 {/* Bank Details & UPI QR */}
@@ -439,7 +500,7 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                   <div className="flex-1 p-2 text-right font-bold text-base sm:text-lg bg-opacity-10 min-w-0" style={{ backgroundColor: lightBg, color: themeColor }}>
                     {isGstEnabled ? 'Grand Total' : 'Total'}
                   </div>
-                  <div className="min-w-[145px] px-3 py-2 text-center font-black text-xl sm:text-2xl text-slate-900 whitespace-nowrap" title={`₹${formatBillNum(totalAmount)}`}>
+                  <div className="min-w-[145px] px-3 py-2 text-center font-black text-xl sm:text-2xl text-slate-900 whitespace-nowrap" style={contentFontStyle} title={`₹${formatBillNum(totalAmount)}`}>
                     ₹{formatBillNum(totalAmount)}
                   </div>
                 </div>

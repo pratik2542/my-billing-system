@@ -35,6 +35,9 @@ export interface InvoiceHeaderCustomization {
   amountHeader?: string;
   mergePackingAndQty?: boolean;
   mergedPackingQtyHeader?: string;
+  showUnitInItemsTable?: boolean; // Show/hide unit like 'Sq Ft' in bill table rows (default true)
+  showTotalQuantityInFooter?: boolean; // Show/hide total quantity summary in footer (default true)
+  totalQuantityCustomText?: string; // Custom override text or unit for total quantity in footer
 }
 
 export interface AnalyticsVisibilitySettings {
@@ -43,6 +46,20 @@ export interface AnalyticsVisibilitySettings {
   showCustomerPurchaseDetails?: boolean;
   showAiBusinessAnalyst?: boolean;
 }
+
+// Bill Font Types
+export type BillFontStyle =
+  | 'crimson-serif'
+  | 'inter-sans'
+  | 'roboto-mono'
+  | 'space-mono'
+  | 'roboto-condensed'
+  | 'open-sans'
+  | 'merriweather-serif'
+  | 'inconsolata-mono';
+
+export type BillFontScope = 'items_and_customer' | 'entire_bill';
+export type BillFontWeight = 'normal' | 'medium' | 'bold';
 
 export interface BusinessSettings {
   name: string;
@@ -75,10 +92,15 @@ export interface BusinessSettings {
   showUpiQr?: boolean;
   // Feature Toggles
   enablePaymentTracking?: boolean;
+  showProductsMenu?: boolean; // Admin option to show/hide Products catalog in menu (default true)
+  showCustomersMenu?: boolean; // Admin option to show/hide Customers directory in menu (default true)
   // Product Units
   customUnits?: string[];
   // Typography / Styling
   nameLetterSpacing?: string;
+  billFont?: BillFontStyle | string;
+  billFontScope?: BillFontScope | string;
+  billFontWeight?: BillFontWeight | string;
   // Custom Invoice Table Headers
   columnHeaders?: InvoiceHeaderCustomization;
   // Declaration Settings
@@ -114,6 +136,9 @@ export interface Invoice {
   cgstAmount?: number;
   // Payment tracking
   payments?: PaymentEntry[];
+  // Unit & Total quantity display customizations
+  showUnitInItemsTable?: boolean;
+  customTotalQtyText?: string;
 }
 
 export enum AppTab {
@@ -134,6 +159,8 @@ export interface UserProfile {
   displayName?: string;
   status: 'active' | 'blocked';
   paymentTrackingBlocked?: boolean;
+  productsMenuBlocked?: boolean; // When true, Products menu is blocked/hidden by Admin
+  customersMenuBlocked?: boolean; // When true, Customers menu is blocked/hidden by Admin
   csvImportAllowed?: boolean;
   maxAllowedSessions?: number; // Admin configurable max active logins (default: 1)
   activeSessions?: Array<{ id: string; device: string; lastActive: number }>;

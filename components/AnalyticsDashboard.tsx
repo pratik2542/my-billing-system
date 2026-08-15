@@ -2389,85 +2389,89 @@ Provide response in JSON with these fields:
             )}
 
             {/* --- KPI Cards (Local Data) --- */}
-            <div className="grid grid-cols-2 xl:grid-cols-6 gap-2 md:gap-4">
-              <div className="bg-gradient-to-br from-red-50 to-orange-50 p-4 md:p-5 rounded-lg shadow-sm border border-red-100 hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="p-2 bg-white rounded-lg text-red-600 shadow-sm"><Wallet size={20} /></div>
-                  <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Revenue</span>
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 md:gap-4">
+              <div className="bg-gradient-to-br from-red-50 to-orange-50 p-3 sm:p-4 rounded-xl shadow-sm border border-red-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="p-1.5 bg-white rounded-lg text-red-600 shadow-sm"><Wallet size={18} /></div>
+                  <span className="text-[10px] sm:text-xs font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Revenue</span>
                 </div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 whitespace-nowrap">
+                <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
                   <TooltipValue display={formatINRCompact(stats.totalRevenue)} full={formatINRFull(stats.totalRevenue)} />
                 </div>
-                <div className="text-xs text-slate-600 mt-1 font-medium">Total Earnings</div>
+                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Total Earnings</div>
               </div>
 
-              <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-4 md:p-5 rounded-lg shadow-sm border border-blue-100 hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="p-2 bg-white rounded-lg text-blue-600 shadow-sm"><TrendingUp size={20} /></div>
-                  <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-1 rounded-full">Bills</span>
+              <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-3 sm:p-4 rounded-xl shadow-sm border border-blue-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="p-1.5 bg-white rounded-lg text-blue-600 shadow-sm"><TrendingUp size={18} /></div>
+                  <span className="text-[10px] sm:text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Bills</span>
                 </div>
-                <div className="text-2xl md:text-3xl font-bold text-slate-900">{stats.totalBills}</div>
-                <div className="text-xs text-slate-600 mt-1 font-medium">Total Invoices</div>
+                <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">{stats.totalBills}</div>
+                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Total Invoices</div>
               </div>
 
-              <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 md:p-5 rounded-lg shadow-sm border border-purple-100 hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="p-2 bg-white rounded-lg text-purple-600 shadow-sm"><Users size={20} /></div>
-                  <span className="text-xs font-bold text-purple-600 bg-purple-100 px-2 py-1 rounded-full">Avg</span>
+              <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-3 sm:p-4 rounded-xl shadow-sm border border-purple-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="p-1.5 bg-white rounded-lg text-purple-600 shadow-sm"><Users size={18} /></div>
+                  <span className="text-[10px] sm:text-xs font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">Avg</span>
                 </div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 whitespace-nowrap">
+                <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
                   <TooltipValue display={formatINRCompact(Math.round(stats.avgBillValue))} full={formatINRFull(Math.round(stats.avgBillValue))} />
                 </div>
-                <div className="text-xs text-slate-600 mt-1 font-medium">AOV (Avg Order)</div>
+                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">AOV (Avg Order)</div>
               </div>
 
-              <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-4 md:p-5 rounded-lg shadow-sm border border-emerald-100 hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="p-2 bg-white rounded-lg text-emerald-600 shadow-sm"><Users size={20} /></div>
-                  <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full">Repeat</span>
+              <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-3 sm:p-4 rounded-xl shadow-sm border border-emerald-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="p-1.5 bg-white rounded-lg text-emerald-600 shadow-sm"><Users size={18} /></div>
+                  <span className="text-[10px] sm:text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">Repeat</span>
                 </div>
-                <div className="text-2xl md:text-3xl font-bold text-slate-900">{stats.repeatPurchaseRate.toFixed(0)}%</div>
-                <div className="text-xs text-slate-600 mt-1 font-medium">Repeat Purchase Rate</div>
+                <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">{stats.repeatPurchaseRate.toFixed(0)}%</div>
+                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Repeat Rate</div>
               </div>
 
-              <div className="bg-gradient-to-br from-indigo-50 to-sky-50 p-4 md:p-5 rounded-lg shadow-sm border border-indigo-100 hover:shadow-md transition-shadow">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="p-2 bg-white rounded-lg text-indigo-600 shadow-sm"><Wallet size={20} /></div>
-                  <span className="text-xs font-bold text-indigo-700 bg-indigo-100 px-2 py-1 rounded-full">LTV</span>
+              <div className="bg-gradient-to-br from-indigo-50 to-sky-50 p-3 sm:p-4 rounded-xl shadow-sm border border-indigo-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="p-1.5 bg-white rounded-lg text-indigo-600 shadow-sm"><Wallet size={18} /></div>
+                  <span className="text-[10px] sm:text-xs font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">LTV</span>
                 </div>
-                <div className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 whitespace-nowrap">
+                <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
                   <TooltipValue display={formatINRCompact(Math.round(stats.avgLTV))} full={formatINRFull(Math.round(stats.avgLTV))} />
                 </div>
-                <div className="text-xs text-slate-600 mt-1 font-medium">Avg Customer LTV</div>
+                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Customer LTV</div>
               </div>
 
-              <div className="bg-gradient-to-br from-amber-50 to-yellow-50 p-4 md:p-5 rounded-lg shadow-sm border border-amber-100 hover:shadow-md transition-shadow">
+              <div className="bg-gradient-to-br from-amber-50 to-yellow-50 p-3 sm:p-4 rounded-xl shadow-sm border border-amber-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
                 {(() => {
                   const summary = formatVolumeSummary(stats.totalBusinessVolumeMap);
                   const title = summary.dominantUnit ? `Total ${summary.dominantUnit} Sold` : 'Total Volume Sold';
                   const iconText = getVolumeIcon(summary.dominantUnit);
-                  const dominantDisplay = summary.dominantQty > 0
-                    ? `${summary.dominantQty % 1 === 0 ? summary.dominantQty.toLocaleString('en-IN') : summary.dominantQty.toFixed(1)} ${summary.dominantUnit}`
-                    : '0 Units';
+                  const formattedQty = summary.dominantQty > 0
+                    ? (summary.dominantQty % 1 === 0 ? summary.dominantQty.toLocaleString('en-IN') : summary.dominantQty.toFixed(1))
+                    : '0';
 
                   return (
                     <>
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="p-2 bg-white rounded-lg text-amber-600 shadow-sm text-base flex items-center justify-center">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="p-1.5 bg-white rounded-lg text-amber-600 shadow-sm text-sm flex items-center justify-center">
                           {iconText}
                         </div>
-                        <span className="text-xs font-bold text-amber-600 bg-amber-100 px-2 py-1 rounded-full">{summary.dominantUnit || 'Volume'}</span>
+                        <span className="text-[10px] sm:text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full truncate max-w-[80px]">
+                          {summary.dominantUnit || 'Volume'}
+                        </span>
                       </div>
-                      <div className="text-xl sm:text-2xl md:text-3xl font-bold text-slate-900 whitespace-nowrap">
-                        <TooltipValue
-                          display={dominantDisplay}
-                          full={summary.text || dominantDisplay}
-                        />
+                      <div className="flex items-baseline gap-1 flex-wrap min-w-0" title={summary.text}>
+                        <span className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 leading-tight">
+                          {formattedQty}
+                        </span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-700 leading-tight">
+                          {summary.dominantUnit || 'Units'}
+                        </span>
                       </div>
-                      <div className="text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
-                        <span>{title}</span>
+                      <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
+                        <span className="truncate">{title}</span>
                         {summary.secondaryText && (
-                          <span className="text-[10px] font-bold text-amber-700 bg-amber-100/90 px-1.5 py-0.5 rounded-md" title={summary.text}>
+                          <span className="text-[10px] font-bold text-amber-800 bg-amber-200/60 px-1.5 py-0.5 rounded truncate max-w-full" title={summary.text}>
                             {summary.secondaryText}
                           </span>
                         )}
@@ -2992,20 +2996,24 @@ Provide response in JSON with these fields:
                               onClick={() => setPaymentDetailModal({ isOpen: true, activeTab: 'outstanding', selectedCustomerName: cust.customerName })}
                               className="p-2.5 sm:p-3 bg-slate-50 hover:bg-emerald-50/60 rounded-xl transition-all border border-slate-100 hover:border-emerald-200 space-y-2 cursor-pointer group"
                             >
-                              {/* Header: Customer Name & Pending Bill count */}
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                                <div className="min-w-0">
-                                  <span className="font-bold text-xs sm:text-sm text-slate-850 group-hover:text-emerald-700 transition-colors truncate">
-                                    {cust.customerName}
-                                  </span>
-                                  {cust.customerCity && (
-                                    <span className="text-[11px] text-slate-400 font-normal ml-1.5">({cust.customerCity})</span>
-                                  )}
-                                  <span className="text-[10px] text-slate-500 font-medium ml-2 bg-slate-200/70 px-1.5 py-0.5 rounded">
-                                    {cust.unpaidBills} bill{cust.unpaidBills !== 1 ? 's' : ''}
-                                  </span>
+                              {/* Header: Customer Name & City */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="font-bold text-xs sm:text-sm text-slate-800 group-hover:text-emerald-700 transition-colors min-w-0 flex-1 break-words">
+                                  {cust.customerName}
                                 </div>
-                                <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap">
+                                {cust.customerCity && (
+                                  <span className="text-[11px] text-slate-500 font-semibold bg-slate-200/70 px-2 py-0.5 rounded-md shrink-0 whitespace-nowrap">
+                                    📍 {cust.customerCity}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Sub-row: Bill count badge & Billed / Due figures */}
+                              <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                                <span className="text-[10px] sm:text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 font-bold px-2 py-0.5 rounded-md whitespace-nowrap">
+                                  📄 {cust.unpaidBills} bill{cust.unpaidBills !== 1 ? 's' : ''}
+                                </span>
+                                <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap ml-auto">
                                   <span className="text-slate-500 font-medium">Billed: {formatINRFull(billed)}</span>
                                   <span className="text-slate-300">•</span>
                                   <span className="text-red-600 font-extrabold">Due: {formatINRFull(owed)}</span>

@@ -8,7 +8,7 @@ import {
   Users, ShieldCheck, Activity, AlertTriangle, UserPlus, Lock, Unlock, RefreshCw, Loader2, X,
   Smartphone, Monitor, Tablet, Clock, Sparkles, Bug, BarChart3, CheckCircle2, Eye, Building,
   Upload, Download, KeyRound, Edit, Mail, Calendar, TrendingUp, DollarSign, PieChart, Layers,
-  Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard, Trash2
+  Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard, Trash2, Sliders
 } from "lucide-react";
 
 // ---- Helpers ----
@@ -241,6 +241,8 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
   const [displayName, setDisplayName] = useState(profile.displayName || profile.email.split("@")[0] || "");
   const [businessName, setBusinessName] = useState(profile.businessName || "");
   const [email, setEmail] = useState(profile.email || "");
+  const [status, setStatus] = useState<"active" | "blocked">(profile.status || "active");
+  const [maxAllowedSessions, setMaxAllowedSessions] = useState<number>(profile.maxAllowedSessions || 1);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
   const isMainAdmin = profile.email?.toLowerCase() === "admin_billing@pratik.ca";
@@ -250,6 +252,10 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
     showCustomerPurchaseDetails: profile.analyticsPermissions?.showCustomerPurchaseDetails !== false,
     showAiBusinessAnalyst: profile.analyticsPermissions?.showAiBusinessAnalyst !== false,
   });
+  const [productsMenuBlocked, setProductsMenuBlocked] = useState(!!profile.productsMenuBlocked);
+  const [customersMenuBlocked, setCustomersMenuBlocked] = useState(!!profile.customersMenuBlocked);
+  const [paymentTrackingBlocked, setPaymentTrackingBlocked] = useState(!!profile.paymentTrackingBlocked);
+  const [csvImportAllowed, setCsvImportAllowed] = useState(!!profile.csvImportAllowed);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -273,7 +279,13 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
       const updates: any = {
         displayName: trimmedName,
         businessName: trimmedBiz || trimmedName,
+        status,
+        maxAllowedSessions,
         analyticsPermissions,
+        productsMenuBlocked,
+        customersMenuBlocked,
+        paymentTrackingBlocked,
+        csvImportAllowed,
       };
       if (!isMainAdmin) {
         updates.email = trimmedEmail;
@@ -291,18 +303,18 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
 
   return (
     <div className="fixed inset-0 z-[85] bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-        <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-5 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <Edit size={20} className="text-indigo-400" />
-            <h2 className="font-bold text-lg">Edit User Details</h2>
+            <h2 className="font-bold text-lg">Edit User & Permissions</h2>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-full">
             <X size={18} />
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="p-6 space-y-4">
+        <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto flex-1">
           <div>
             <label className="block text-xs font-bold text-slate-600 mb-1">User Name / Display Name *</label>
             <input
@@ -352,10 +364,93 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ profile, onClose, onUpdat
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-medium"
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
-                  💡 <strong>Note:</strong> Updates account details in Firestore database. To change the login credentials in Firebase Auth, update the user in <span className="font-semibold text-indigo-600">Firebase Console &gt; Authentication &gt; Users</span>.
+                  💡 <strong>Note:</strong> Updates account details in Firestore database.
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Account Status & Login Limits */}
+          <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Account Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as "active" | "blocked")}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="active">🟢 Active / Enabled</option>
+                <option value="blocked">🔴 Blocked / Inactive</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Max Active Logins</label>
+              <select
+                value={maxAllowedSessions}
+                onChange={(e) => setMaxAllowedSessions(parseInt(e.target.value))}
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value={1}>1 Login</option>
+                <option value={2}>2 Logins</option>
+                <option value={3}>3 Logins</option>
+                <option value={5}>5 Logins</option>
+                <option value={10}>10 Logins</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Admin Navigation & Modules Access for Business/User */}
+          <div className="bg-indigo-50/80 p-3.5 rounded-xl border border-indigo-200 space-y-2">
+            <div className="flex items-center gap-1.5 border-b border-indigo-200/80 pb-1.5">
+              <Sliders size={14} className="text-indigo-600 shrink-0" />
+              <span className="text-xs font-bold text-slate-800">Menu & Feature Access (Admin Control)</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-indigo-100 cursor-pointer hover:bg-indigo-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={!productsMenuBlocked}
+                  onChange={(e) => setProductsMenuBlocked(!e.target.checked)}
+                  className="accent-indigo-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">Products Menu</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-indigo-100 cursor-pointer hover:bg-indigo-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={!customersMenuBlocked}
+                  onChange={(e) => setCustomersMenuBlocked(!e.target.checked)}
+                  className="accent-indigo-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">Customers Menu</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-indigo-100 cursor-pointer hover:bg-indigo-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={!paymentTrackingBlocked}
+                  onChange={(e) => setPaymentTrackingBlocked(!e.target.checked)}
+                  className="accent-indigo-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">Payment Tracking</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2 bg-white rounded-lg border border-indigo-100 cursor-pointer hover:bg-indigo-50/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={csvImportAllowed}
+                  onChange={(e) => setCsvImportAllowed(e.target.checked)}
+                  className="accent-indigo-600 w-4 h-4 rounded cursor-pointer"
+                />
+                <span className="font-semibold text-slate-700 select-none">CSV Import</span>
+              </label>
+            </div>
+            <p className="text-[10px] text-slate-500 italic">
+              Unchecked menus will be hidden and blocked for this business user.
+            </p>
           </div>
 
           {/* Admin Analytics & AI Permissions for User */}
@@ -704,10 +799,6 @@ export const AdminPortal: React.FC = () => {
   const [workspaceInvoiceCounts, setWorkspaceInvoiceCounts] = useState<Record<string, number>>({});
   const [totalInvoicesCount, setTotalInvoicesCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [togglingPaymentId, setTogglingPaymentId] = useState<string | null>(null);
-  const [togglingCsvId, setTogglingCsvId] = useState<string | null>(null);
-  const [updatingMaxSessionsId, setUpdatingMaxSessionsId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [preselectedBusinessId, setPreselectedBusinessId] = useState<string | undefined>(undefined);
@@ -889,46 +980,6 @@ export const AdminPortal: React.FC = () => {
     return { ...p, invoiceCount: liveCount };
   });
 
-  const toggleBlockUser = async (profile: UserProfile) => {
-    const newStatus: "active" | "blocked" = profile.status === "active" ? "blocked" : "active";
-    if (!window.confirm(`Are you sure you want to ${newStatus === "blocked" ? "deactivate / block" : "activate / unblock"} ${profile.email}?`)) return;
-    setTogglingId(profile.uid);
-    try { await updateDoc(doc(db, "userProfiles", profile.uid), { status: newStatus }); }
-    catch { alert("Failed to update user status."); }
-    finally { setTogglingId(null); }
-  };
-
-  const togglePaymentBlockUser = async (profile: UserProfile) => {
-    const isBlocked = !!profile.paymentTrackingBlocked;
-    const action = isBlocked ? "allow payment tracking for" : "block payment tracking for";
-    if (!window.confirm(`Are you sure you want to ${action} ${profile.email}?`)) return;
-    setTogglingPaymentId(profile.uid);
-    try { await updateDoc(doc(db, "userProfiles", profile.uid), { paymentTrackingBlocked: !isBlocked }); }
-    catch { alert("Failed to update payment tracking permission."); }
-    finally { setTogglingPaymentId(null); }
-  };
-
-  const toggleCsvImportUser = async (profile: UserProfile) => {
-    const isAllowed = !!profile.csvImportAllowed;
-    const action = isAllowed ? "block CSV import for" : "allow CSV import for";
-    if (!window.confirm(`Are you sure you want to ${action} ${profile.email}?`)) return;
-    setTogglingCsvId(profile.uid);
-    try { await updateDoc(doc(db, "userProfiles", profile.uid), { csvImportAllowed: !isAllowed }); }
-    catch { alert("Failed to update CSV import permission."); }
-    finally { setTogglingCsvId(null); }
-  };
-
-  const updateMaxSessions = async (profile: UserProfile, maxSessions: number) => {
-    setUpdatingMaxSessionsId(profile.uid);
-    try {
-      await updateDoc(doc(db, "userProfiles", profile.uid), { maxAllowedSessions: maxSessions });
-    } catch {
-      alert("Failed to update max allowed logins.");
-    } finally {
-      setUpdatingMaxSessionsId(null);
-    }
-  };
-
   const openAddUserForBusiness = (bId: string) => {
     setPreselectedBusinessId(bId);
     setShowAddUser(true);
@@ -1004,15 +1055,7 @@ export const AdminPortal: React.FC = () => {
           : activeTab === "users" ? (
             <UsersTabContent
               profiles={enrichedProfiles}
-              togglingId={togglingId}
-              togglingPaymentId={togglingPaymentId}
-              togglingCsvId={togglingCsvId}
-              updatingMaxSessionsId={updatingMaxSessionsId}
               deletingId={deletingId}
-              onToggleBlock={toggleBlockUser}
-              onTogglePaymentBlock={togglePaymentBlockUser}
-              onToggleCsvImport={toggleCsvImportUser}
-              onUpdateMaxSessions={updateMaxSessions}
               onDeleteUser={handleDeleteUser}
               onViewUser={setSelectedUser}
               onEditUser={setEditingUser}
@@ -1033,29 +1076,19 @@ export const AdminPortal: React.FC = () => {
 // ---- Users Tab Content ----
 const UsersTabContent: React.FC<{
   profiles: UserProfile[];
-  togglingId: string | null;
-  togglingPaymentId: string | null;
-  togglingCsvId: string | null;
-  updatingMaxSessionsId: string | null;
   deletingId: string | null;
-  onToggleBlock: (p: UserProfile) => void;
-  onTogglePaymentBlock: (p: UserProfile) => void;
-  onToggleCsvImport: (p: UserProfile) => void;
-  onUpdateMaxSessions: (p: UserProfile, max: number) => void;
   onDeleteUser: (p: UserProfile) => void;
   onViewUser: (p: UserProfile) => void;
   onEditUser: (p: UserProfile) => void;
-}> = ({ profiles, togglingId, togglingPaymentId, togglingCsvId, updatingMaxSessionsId, deletingId, onToggleBlock, onTogglePaymentBlock, onToggleCsvImport, onUpdateMaxSessions, onDeleteUser, onViewUser, onEditUser }) => (
+}> = ({ profiles, deletingId, onDeleteUser, onViewUser, onEditUser }) => (
   <div>
     <div className="hidden md:block overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead className="bg-slate-100 text-slate-600 text-xs uppercase font-bold sticky top-0 z-10">
           <tr>
-            <th className="p-4">User / Email</th>
+            <th className="p-4">User / Business</th>
             <th className="p-4 text-center">Status</th>
             <th className="p-4 text-center">Max Logins</th>
-            <th className="p-4 text-center">Payments</th>
-            <th className="p-4 text-center">CSV Import</th>
             <th className="p-4 text-center">Last Login</th>
             <th className="p-4 text-center">Invoices</th>
             <th className="p-4 text-center">Actions</th>
@@ -1063,150 +1096,131 @@ const UsersTabContent: React.FC<{
         </thead>
         <tbody className="divide-y divide-slate-100">
           {profiles.map((p) => (
-            <tr key={p.uid} className="hover:bg-slate-50 transition-colors">
+            <tr key={p.uid} className="hover:bg-slate-50/80 transition-colors">
               <td className="p-4">
-                <div className="flex items-center gap-1.5 font-semibold text-slate-800">
-                  <span>{p.displayName || p.email.split("@")[0]}</span>
-                  <button
-                    onClick={() => onEditUser(p)}
-                    className="text-indigo-600 hover:text-indigo-800 p-0.5 rounded hover:bg-indigo-50 transition-colors"
-                    title="Edit User Details (Name & Email)"
-                  >
-                    <Edit size={12} />
-                  </button>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-black text-sm border border-indigo-100 shrink-0">
+                    {(p.displayName || p.email)[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                      <span>{p.displayName || p.email.split("@")[0]}</span>
+                      {p.businessName && (
+                        <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-bold">
+                          🏢 {p.businessName}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {p.email}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-xs text-slate-400">
-                  <span>{p.email}</span>
-                </div>
-                {p.businessName && <div className="text-[10px] text-indigo-600 font-bold mt-0.5">🏢 {p.businessName}</div>}
               </td>
               <td className="p-4 text-center"><StatusBadge status={p.status}/></td>
               <td className="p-4 text-center">
-                <div className="flex items-center justify-center gap-1">
-                  <select
-                    value={p.maxAllowedSessions || 1}
-                    disabled={updatingMaxSessionsId === p.uid}
-                    onChange={(e) => onUpdateMaxSessions(p, parseInt(e.target.value))}
-                    className="px-2 py-1 bg-slate-50 border border-slate-300 rounded text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-indigo-500"
+                <span className="inline-flex items-center px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold border border-slate-200">
+                  {p.maxAllowedSessions || 1} Login{(p.maxAllowedSessions || 1) > 1 ? "s" : ""}
+                </span>
+              </td>
+              <td className="p-4 text-center text-xs text-slate-500">
+                <div className="font-semibold text-slate-700">{p.lastLogin ? relativeTime(p.lastLogin) : "Never"}</div>
+                <div className="text-[10px] text-slate-400">{p.lastLogin ? formatTs(p.lastLogin) : ""}</div>
+              </td>
+              <td className="p-4 text-center font-bold text-slate-800 text-base">{p.invoiceCount || 0}</td>
+              <td className="p-4 text-center">
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => onEditUser(p)}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs active:scale-95 cursor-pointer"
+                    title="Edit User & Manage Permissions"
                   >
-                    <option value={1}>1 Login</option>
-                    <option value={2}>2 Logins</option>
-                    <option value={3}>3 Logins</option>
-                    <option value={5}>5 Logins</option>
-                    <option value={10}>10 Logins</option>
-                  </select>
+                    <Edit size={13} />
+                    <span>Edit & Permissions</span>
+                  </button>
+                  <button
+                    onClick={() => onViewUser(p)}
+                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                    title="View Activity & Details"
+                  >
+                    <Eye size={15}/>
+                  </button>
+                  {p.email?.toLowerCase() !== "admin_billing@pratik.ca" && (
+                    <button
+                      onClick={() => onDeleteUser(p)}
+                      disabled={deletingId === p.uid}
+                      title="Remove User Profile from Firestore"
+                      className="p-2 rounded-lg bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      {deletingId === p.uid ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                    </button>
+                  )}
                 </div>
               </td>
-              <td className="p-4 text-center">
-                {p.paymentTrackingBlocked ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">Blocked</span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Allowed</span>
-                )}
-              </td>
-              <td className="p-4 text-center">
-                {p.csvImportAllowed ? (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">Allowed</span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">Blocked</span>
-                )}
-              </td>
-              <td className="p-4 text-center text-xs text-slate-500"><div>{p.lastLogin ? relativeTime(p.lastLogin) : "Never"}</div><div className="text-[10px] text-slate-400">{p.lastLogin ? formatTs(p.lastLogin) : ""}</div></td>
-              <td className="p-4 text-center font-bold text-slate-700">{p.invoiceCount || 0}</td>
-              <td className="p-4 text-center"><div className="flex items-center justify-center gap-1.5">
-                <button onClick={() => onViewUser(p)} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full" title="View Details"><Eye size={14}/></button>
-                <button
-                  onClick={() => onEditUser(p)}
-                  title="Edit User Details (Name & Email)"
-                  className="p-2 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors"
-                >
-                  <Edit size={14} />
-                </button>
-                <button onClick={() => onToggleCsvImport(p)} disabled={togglingCsvId === p.uid} title={p.csvImportAllowed ? "Block CSV Import" : "Allow CSV Import"}
-                  className={`p-2 rounded-full disabled:opacity-50 ${p.csvImportAllowed ? "bg-emerald-100 hover:bg-emerald-200 text-emerald-700" : "bg-slate-100 hover:bg-emerald-100 text-slate-600 hover:text-emerald-700"}`}>
-                  {togglingCsvId === p.uid ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
-                </button>
-                <button onClick={() => onTogglePaymentBlock(p)} disabled={togglingPaymentId === p.uid} title={p.paymentTrackingBlocked ? "Allow Payment Tracking" : "Block Payment Tracking"}
-                  className={`p-2 rounded-full disabled:opacity-50 ${p.paymentTrackingBlocked ? "bg-purple-100 hover:bg-purple-200 text-purple-700" : "bg-slate-100 hover:bg-purple-100 text-slate-600 hover:text-purple-700"}`}>
-                  {togglingPaymentId === p.uid ? <Loader2 size={14} className="animate-spin"/> : <Sparkles size={14}/>}
-                </button>
-                <button onClick={() => onToggleBlock(p)} disabled={togglingId === p.uid} title={p.status === "active" ? "Deactivate / Block User" : "Activate / Unblock User"}
-                  className={`p-2 rounded-full disabled:opacity-50 ${p.status === "active" ? "bg-red-100 hover:bg-red-200 text-red-700" : "bg-green-100 hover:bg-green-200 text-green-700"}`}>
-                  {togglingId === p.uid ? <Loader2 size={14} className="animate-spin"/> : p.status === "active" ? <Lock size={14}/> : <Unlock size={14}/>}
-                </button>
-                {p.email?.toLowerCase() !== "admin_billing@pratik.ca" && (
-                  <button
-                    onClick={() => onDeleteUser(p)}
-                    disabled={deletingId === p.uid}
-                    title="Remove User Profile from Firestore"
-                    className="p-2 rounded-full bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-50"
-                  >
-                    {deletingId === p.uid ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  </button>
-                )}
-              </div></td>
             </tr>
           ))}
-          {profiles.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-400">No users found</td></tr>}
+          {profiles.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-400">No users found</td></tr>}
         </tbody>
       </table>
     </div>
+    {/* Mobile Card List */}
     <div className="md:hidden p-3 space-y-3">
       {profiles.map((p) => (
-        <div key={p.uid} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-          <div className="flex items-start justify-between mb-3">
+        <div key={p.uid} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-black text-sm border border-indigo-100 shrink-0">
+                {(p.displayName || p.email)[0].toUpperCase()}
+              </div>
+              <div>
+                <div className="font-bold text-slate-900 text-sm">
+                  {p.displayName || p.email.split("@")[0]}
+                </div>
+                <div className="text-xs text-slate-400">{p.email}</div>
+                {p.businessName && (
+                  <div className="text-[10px] text-indigo-600 font-bold mt-0.5">🏢 {p.businessName}</div>
+                )}
+              </div>
+            </div>
+            <StatusBadge status={p.status}/>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg text-center text-xs">
             <div>
-              <div className="flex items-center gap-1 font-bold text-slate-800">
-                <span>{p.displayName || p.email.split("@")[0]}</span>
-                <button onClick={() => onEditUser(p)} className="text-indigo-600 hover:text-indigo-800 p-0.5">
-                  <Edit size={12} />
-                </button>
-              </div>
-              <div className="text-xs text-slate-400">
-                <span>{p.email}</span>
-              </div>
-              {p.businessName && <div className="text-[10px] text-indigo-600 font-bold mt-0.5">🏢 {p.businessName}</div>}
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Logins</div>
+              <div className="font-bold text-slate-700">{p.maxAllowedSessions || 1}</div>
             </div>
-            <div className="flex flex-col items-end gap-1">
-              <StatusBadge status={p.status}/>
-              <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">Max Logins: {p.maxAllowedSessions || 1}</span>
+            <div>
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Invoices</div>
+              <div className="font-bold text-slate-700">{p.invoiceCount || 0}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Last Login</div>
+              <div className="font-bold text-slate-700 truncate">{p.lastLogin ? relativeTime(p.lastLogin) : "Never"}</div>
             </div>
           </div>
-          <div className="text-xs text-slate-400 mb-3 flex items-center justify-between">
-            <span><Clock size={11} className="inline mr-1"/> Last: {p.lastLogin ? relativeTime(p.lastLogin) : "Never"}</span>
-            <select
-              value={p.maxAllowedSessions || 1}
-              onChange={(e) => onUpdateMaxSessions(p, parseInt(e.target.value))}
-              className="px-2 py-0.5 bg-slate-100 border border-slate-300 rounded text-xs font-bold text-slate-700"
-            >
-              <option value={1}>1 Login</option>
-              <option value={2}>2 Logins</option>
-              <option value={3}>3 Logins</option>
-              <option value={5}>5 Logins</option>
-            </select>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => onViewUser(p)} className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold"><Eye size={12} className="inline mr-1"/> Details</button>
+
+          <div className="flex items-center gap-2 pt-1">
             <button
               onClick={() => onEditUser(p)}
-              className="flex-1 py-2 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+              className="flex-1 py-2.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
             >
-              <Edit size={12} className="inline mr-1" /> Edit
+              <Edit size={13} /> Edit & Permissions
             </button>
-            <button onClick={() => onToggleCsvImport(p)} disabled={togglingCsvId === p.uid} className={`flex-1 py-2 rounded-lg text-xs font-bold ${p.csvImportAllowed ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-              {togglingCsvId === p.uid ? <Loader2 size={12} className="animate-spin"/> : p.csvImportAllowed ? "Block CSV" : "Allow CSV"}
-            </button>
-            <button onClick={() => onToggleBlock(p)} disabled={togglingId === p.uid} className={`flex-1 py-2 rounded-lg text-xs font-bold ${p.status === "active" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
-              {togglingId === p.uid ? <Loader2 size={12} className="animate-spin"/> : p.status === "active" ? "Deactivate" : "Activate"}
+            <button
+              onClick={() => onViewUser(p)}
+              className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
+            >
+              <Eye size={13} /> Details
             </button>
             {p.email?.toLowerCase() !== "admin_billing@pratik.ca" && (
               <button
                 onClick={() => onDeleteUser(p)}
                 disabled={deletingId === p.uid}
-                className="py-2 px-2.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-red-100 text-slate-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                className="py-2.5 px-2.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-50 flex items-center justify-center cursor-pointer"
                 title="Remove Profile"
               >
-                {deletingId === p.uid ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                {deletingId === p.uid ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
               </button>
             )}
           </div>
