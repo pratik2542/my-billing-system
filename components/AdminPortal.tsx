@@ -81,6 +81,16 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, profile
     };
   });
 
+  // Automatically populate maxSessions & permissions preview when targetBusinessId changes
+  useEffect(() => {
+    if (targetBusinessId !== "new") {
+      const parentOwner = profiles.find(p => p.uid === targetBusinessId || p.businessId === targetBusinessId);
+      if (parentOwner && parentOwner.maxAllowedSessions) {
+        setMaxSessions(parentOwner.maxAllowedSessions);
+      }
+    }
+  }, [targetBusinessId, profiles]);
+
   const handleCreateOrSync = async (e: React.FormEvent) => {
     e.preventDefault(); setError(""); setCreating(true);
     try {
@@ -96,6 +106,25 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, profile
         const parentOwner = profiles.find(p => p.uid === finalBusinessId || p.businessId === finalBusinessId);
         const businessName = parentOwner?.businessName || displayName.trim() || email.split("@")[0];
 
+        // Inherit exact permissions, max sessions, and settings from first/existing account of this business
+        const inheritedPermissions = parentOwner ? {
+          paymentTrackingBlocked: !!parentOwner.paymentTrackingBlocked,
+          productsMenuBlocked: !!parentOwner.productsMenuBlocked,
+          customersMenuBlocked: !!parentOwner.customersMenuBlocked,
+          csvImportAllowed: !!parentOwner.csvImportAllowed,
+          analyticsPermissions: parentOwner.analyticsPermissions || parentOwner.analyticsVisibility || {
+            showProductAnalysis: true,
+            showCustomerAnalysis: true,
+            showCustomerPurchaseDetails: true,
+            showAiBusinessAnalyst: true
+          }
+        } : {
+          paymentTrackingBlocked: false,
+          productsMenuBlocked: false,
+          customersMenuBlocked: false,
+          csvImportAllowed: false
+        };
+
         await setDoc(doc(db, "userProfiles", newUid), {
           uid: newUid,
           email,
@@ -104,7 +133,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, profile
           businessId: finalBusinessId,
           businessName: businessName,
           role: targetBusinessId === "new" ? "owner" : "member",
-          maxAllowedSessions: maxSessions,
+          maxAllowedSessions: parentOwner?.maxAllowedSessions || maxSessions,
           activeSessions: [],
           createdAt: Date.now(),
           lastLogin: 0,
@@ -112,22 +141,43 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, profile
           aiRequestCount: 0,
           errorCount: 0,
           invoiceCount: 0,
-          csvImportAllowed: false,
-          paymentTrackingBlocked: false
+          ...inheritedPermissions
         } as UserProfile);
 
         await fbSignOut(secondaryAuth);
       } else {
         const generatedUid = `user-${Date.now()}`;
+        const finalBusinessId = targetBusinessId === "new" ? generatedUid : targetBusinessId;
+        const parentOwner = profiles.find(p => p.uid === finalBusinessId || p.businessId === finalBusinessId);
+        const businessName = parentOwner?.businessName || displayName.trim() || email.split("@")[0];
+
+        const inheritedPermissions = parentOwner ? {
+          paymentTrackingBlocked: !!parentOwner.paymentTrackingBlocked,
+          productsMenuBlocked: !!parentOwner.productsMenuBlocked,
+          customersMenuBlocked: !!parentOwner.customersMenuBlocked,
+          csvImportAllowed: !!parentOwner.csvImportAllowed,
+          analyticsPermissions: parentOwner.analyticsPermissions || parentOwner.analyticsVisibility || {
+            showProductAnalysis: true,
+            showCustomerAnalysis: true,
+            showCustomerPurchaseDetails: true,
+            showAiBusinessAnalyst: true
+          }
+        } : {
+          paymentTrackingBlocked: false,
+          productsMenuBlocked: false,
+          customersMenuBlocked: false,
+          csvImportAllowed: false
+        };
+
         await setDoc(doc(db, "userProfiles", generatedUid), {
           uid: generatedUid,
           email: email.trim().toLowerCase(),
           displayName: displayName.trim() || email.split("@")[0],
           status: "active",
-          businessId: generatedUid,
-          businessName: displayName.trim() || email.split("@")[0],
-          role: "owner",
-          maxAllowedSessions: maxSessions,
+          businessId: finalBusinessId,
+          businessName: businessName,
+          role: targetBusinessId === "new" ? "owner" : "member",
+          maxAllowedSessions: parentOwner?.maxAllowedSessions || maxSessions,
           activeSessions: [],
           createdAt: Date.now(),
           lastLogin: 0,
@@ -135,8 +185,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ onClose, onCreated, profile
           aiRequestCount: 0,
           errorCount: 0,
           invoiceCount: 0,
-          csvImportAllowed: false,
-          paymentTrackingBlocked: false
+          ...inheritedPermissions
         } as UserProfile);
       }
 
