@@ -1,6 +1,6 @@
 import React from 'react';
-import { BusinessSettings, InvoiceItem, PaymentEntry } from '../types';
-import { getBillFontFamily } from '../constants';
+import { BusinessSettings, ColumnId, InvoiceItem, PaymentEntry } from '../types';
+import { getBillFontFamily, getEffectiveColumnOrder } from '../constants';
 
 interface InvoiceTemplateProps {
   id: string; // The HTML ID for printing context
@@ -199,6 +199,60 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   // Footer Total Quantity calculation & custom formatting
   const showFooterTotal = colHeaders.showTotalQuantityInFooter !== false;
 
+  // Dynamic Column Widths (First 2 columns: 'sn' and 'particulars' are fixed/flex)
+  const colWidths = colHeaders.columnWidths || {};
+  const getColWidth = (id: ColumnId, defaultWidth: string) => {
+    if (id === 'sn' || id === 'particulars') return defaultWidth;
+    return colWidths[id] || defaultWidth;
+  };
+
+  const columnDefs: Record<ColumnId, {
+    header: string;
+    widthClass: string;
+    renderCell: (item: InvoiceItem, index: number) => React.ReactNode;
+  }> = {
+    sn: {
+      header: snHeader,
+      widthClass: getColWidth('sn', 'w-10'),
+      renderCell: (_, index) => index + 1,
+    },
+    particulars: {
+      header: particularsHeader,
+      widthClass: getColWidth('particulars', 'flex-1'),
+      renderCell: (item) => item.name,
+    },
+    packing: {
+      header: packingHeader,
+      widthClass: getColWidth('packing', 'w-24'),
+      renderCell: (item) => item.packing || '-',
+    },
+    qty: {
+      header: qtyHeader,
+      widthClass: getColWidth('qty', 'w-16'),
+      renderCell: (item) => `${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''}`,
+    },
+    packingQty: {
+      header: mergedPackingQtyHeader,
+      widthClass: getColWidth('packingQty', 'w-40'),
+      renderCell: (item) => item.packing
+        ? `${item.packing} (${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''})`
+        : `${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''}`,
+    },
+    rate: {
+      header: rateHeader,
+      widthClass: getColWidth('rate', 'w-20'),
+      renderCell: (item) => formatBillNum(item.rate),
+    },
+    amount: {
+      header: amountHeader,
+      widthClass: getColWidth('amount', 'w-32'),
+      renderCell: (item) => formatBillNum(item.amount),
+    },
+  };
+
+  const activeColumnOrder = getEffectiveColumnOrder(colHeaders);
+  const activeColumns = activeColumnOrder.map((id) => ({ id, ...columnDefs[id] }));
+
   const displayTotalQty = React.useMemo(() => {
     if (!showFooterTotal) return '';
 
@@ -223,6 +277,67 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
 
     return totalQty > 0 ? formatBillQty(totalQty) : '';
   }, [showFooterTotal, customTotalQtyText, totalWeightDisplay, items, totalQty, showUnit]);
+
+  const renderFooterRow = (
+    label: string,
+    amountVal: string | number | undefined,
+    showQty: boolean,
+    isGrandTotal = false
+  ) => (
+    <div className="flex border-t" style={{ borderColor: borderColor }}>
+      {activeColumns.map((col, idx) => {
+        const isLast = idx === activeColumns.length - 1;
+        const borderClass = isLast ? '' : 'border-r';
+
+        if (col.id === 'particulars') {
+          return (
+            <div
+              key={col.id}
+              className={`${col.widthClass} ${borderClass} text-right p-1 pr-4 font-bold min-w-0 ${isGrandTotal ? 'text-lg' : ''}`}
+              style={{ borderColor: borderColor, color: themeColor }}
+            >
+              {label}
+            </div>
+          );
+        }
+
+        if (col.id === 'amount') {
+          return (
+            <div
+              key={col.id}
+              className={`${col.widthClass} ${borderClass} text-center p-1 font-bold ${isGrandTotal ? 'text-lg' : ''} text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1`}
+              style={contentFontStyle}
+            >
+              {amountVal !== undefined ? `₹${formatBillNum(amountVal)}` : ''}
+            </div>
+          );
+        }
+
+        const hasQtyCol = activeColumns.some(c => c.id === 'qty' || c.id === 'packingQty');
+        const isQtyCell = col.id === 'qty' || col.id === 'packingQty' || (!hasQtyCol && col.id === 'packing');
+
+        if (showQty && isQtyCell) {
+          return (
+            <div
+              key={col.id}
+              className={`${col.widthClass} ${borderClass} text-center p-1 font-bold ${isGrandTotal ? 'text-lg' : ''} text-slate-900 flex items-center justify-center shrink-0 px-1 overflow-hidden`}
+              style={{ borderColor: borderColor, ...contentFontStyle }}
+            >
+              <span className="w-full text-center break-words leading-tight whitespace-pre-line">{displayTotalQty}</span>
+            </div>
+          );
+        }
+
+        return (
+          <div
+            key={col.id}
+            className={`${col.widthClass} ${borderClass} shrink-0`}
+            style={{ borderColor: borderColor }}
+          />
+        );
+      })}
+    </div>
+  );
 
   return (
     <div
@@ -299,54 +414,53 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             )}
           </div>
 
-          {/* Table Header */}
+          {/* Dynamic Table Header */}
           <div className="flex border-b-2" style={{ borderColor: borderColor, backgroundColor: lightBg, color: themeColor }}>
-            <div className="w-10 p-1 text-center font-bold border-r shrink-0" style={{ borderColor: borderColor }}>{snHeader}</div>
-            <div className="flex-1 p-1 text-center font-bold border-r min-w-0" style={{ borderColor: borderColor }}>{particularsHeader}</div>
-            {mergePackingAndQty ? (
-              <div className="w-40 p-1 text-center font-bold border-r shrink-0" style={{ borderColor: borderColor }}>{mergedPackingQtyHeader}</div>
-            ) : (
-              <>
-                <div className="w-24 p-1 text-center font-bold border-r shrink-0" style={{ borderColor: borderColor }}>{packingHeader}</div>
-                <div className="w-16 p-1 text-center font-bold border-r shrink-0" style={{ borderColor: borderColor }}>{qtyHeader}</div>
-              </>
-            )}
-            <div className="w-20 p-1 text-center font-bold border-r shrink-0" style={{ borderColor: borderColor }}>{rateHeader}</div>
-            <div className="w-32 p-1 text-center font-bold shrink-0">{amountHeader}</div>
+            {activeColumns.map((col, idx) => (
+              <div
+                key={col.id}
+                className={`${col.widthClass} p-1 text-center font-bold ${idx < activeColumns.length - 1 ? 'border-r' : ''} ${col.id === 'particulars' ? 'min-w-0' : 'shrink-0'} flex items-center justify-center overflow-hidden`}
+                style={{ borderColor: borderColor }}
+              >
+                <span className="w-full text-center break-words leading-tight">{col.header}</span>
+              </div>
+            ))}
           </div>
 
-          {/* Table Body */}
+          {/* Dynamic Table Body */}
           <div className="flex-1 flex flex-col">
             {items.map((item, index) => (
-              <div key={item.id} className="flex border-b" style={{ borderColor: lightBorder }}>
-                <div className={`w-10 p-1 text-center border-r flex items-center justify-center text-slate-800 shrink-0 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
-                  {index + 1}
-                </div>
-                <div className={`flex-1 p-1 pl-3 text-left border-r text-lg text-slate-800 ${regularWeightClass} break-words leading-snug min-w-0 flex items-center`} style={{ borderColor: borderColor, ...contentFontStyle }}>
-                  {item.name}
-                </div>
-                {mergePackingAndQty ? (
-                  <div className={`w-40 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center break-words leading-snug shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
-                    {item.packing
-                      ? `${item.packing} (${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''})`
-                      : `${formatBillQty(item.quantity)}${showUnit && item.unit ? ` ${item.unit}` : ''}`}
-                  </div>
-                ) : (
-                  <>
-                    <div className={`w-24 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center break-words leading-snug shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
-                      {item.packing || '-'}
+              <div key={item.id} className="flex border-b min-h-[36px]" style={{ borderColor: lightBorder }}>
+                {activeColumns.map((col, idx) => {
+                  const isLast = idx === activeColumns.length - 1;
+                  const isParticulars = col.id === 'particulars';
+                  const isAmount = col.id === 'amount';
+
+                  let cellClass = `${col.widthClass} p-1 ${isLast ? '' : 'border-r'} `;
+                  if (isParticulars) {
+                    cellClass += `pl-3 text-left text-lg text-slate-800 min-w-0 flex items-center ${regularWeightClass}`;
+                  } else if (isAmount) {
+                    cellClass += `text-center text-lg ${boldWeightClass} text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1 overflow-hidden`;
+                  } else if (col.id === 'sn') {
+                    cellClass += `text-center flex items-center justify-center text-slate-800 shrink-0 ${regularWeightClass}`;
+                  } else {
+                    cellClass += `text-center text-lg text-slate-900 flex items-center justify-center shrink-0 px-1 overflow-hidden ${regularWeightClass}`;
+                  }
+
+                  const cellContent = col.renderCell(item, index);
+
+                  return (
+                    <div key={col.id} className={cellClass} style={{ borderColor: borderColor, ...contentFontStyle }}>
+                      {isParticulars ? (
+                        <span className="w-full break-words leading-snug">{cellContent}</span>
+                      ) : isAmount || col.id === 'sn' ? (
+                        cellContent
+                      ) : (
+                        <span className="w-full text-center break-words leading-tight">{cellContent}</span>
+                      )}
                     </div>
-                    <div className={`w-16 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
-                      {formatBillQty(item.quantity)}{showUnit && item.unit ? ` ${item.unit}` : ''}
-                    </div>
-                  </>
-                )}
-                <div className={`w-20 p-1 text-center border-r text-lg text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1 ${regularWeightClass}`} style={{ borderColor: borderColor, ...contentFontStyle }}>
-                  {formatBillNum(item.rate)}
-                </div>
-                <div className={`w-32 p-1 text-center text-lg ${boldWeightClass} text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1`} style={contentFontStyle}>
-                  {formatBillNum(item.amount)}
-                </div>
+                  );
+                })}
               </div>
             ))}
 
@@ -354,82 +468,28 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             <div className="flex-1 flex flex-col">
               {Array.from({ length: emptyRows }).map((_, i) => (
                 <div key={`empty-${i}`} className="flex border-b flex-1 min-h-[40px]" style={{ borderColor: hexToRgba(themeColor, 0.1) }}>
-                  <div className="w-10 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="flex-1 border-r min-w-0" style={{ borderColor: borderColor }}></div>
-                  {mergePackingAndQty ? (
-                    <div className="w-40 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  ) : (
-                    <>
-                      <div className="w-24 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                      <div className="w-16 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                    </>
-                  )}
-                  <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-32 shrink-0"></div>
+                  {activeColumns.map((col, idx) => (
+                    <div
+                      key={col.id}
+                      className={`${col.widthClass} ${idx < activeColumns.length - 1 ? 'border-r' : ''} ${col.id === 'particulars' ? 'min-w-0' : 'shrink-0'}`}
+                      style={{ borderColor: borderColor }}
+                    />
+                  ))}
                 </div>
               ))}
             </div>
 
-            {/* Subtotal Row (If GST enabled) */}
-            {isGstEnabled && (
-              <div className="flex border-t" style={{ borderColor: borderColor }}>
-                <div className="w-10 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                <div className="flex-1 border-r text-right p-1 pr-4 font-bold min-w-0" style={{ borderColor: borderColor, color: themeColor }}>
-                  Subtotal
-                </div>
-                <div className="w-40 border-r text-center p-1 font-bold text-slate-900 flex items-center justify-center shrink-0 px-1" style={{ borderColor: borderColor, ...contentFontStyle }}>
-                  {displayTotalQty}
-                </div>
-                <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
-                  ₹{formatBillNum(calcSubtotal)}
-                </div>
-              </div>
-            )}
-
-            {/* GST Split Rows (If enabled) */}
+            {/* Subtotal & Tax Split Rows (If GST enabled) */}
             {isGstEnabled && (
               <>
-                <div className="flex border-t" style={{ borderColor: borderColor }}>
-                  <div className="w-10 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="flex-1 border-r text-right p-1 pr-4 font-bold min-w-0" style={{ borderColor: borderColor, color: themeColor }}>
-                    Add: CGST ({halfRate}%)
-                  </div>
-                  <div className="w-40 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
-                    ₹{formatBillNum(calcCgst)}
-                  </div>
-                </div>
-                <div className="flex border-t" style={{ borderColor: borderColor }}>
-                  <div className="w-10 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="flex-1 border-r text-right p-1 pr-4 font-bold min-w-0" style={{ borderColor: borderColor, color: themeColor }}>
-                    Add: SGST ({halfRate}%)
-                  </div>
-                  <div className="w-40 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-                  <div className="w-32 text-center p-1 font-bold text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
-                    ₹{formatBillNum(calcSgst)}
-                  </div>
-                </div>
+                {renderFooterRow('Subtotal', calcSubtotal, true)}
+                {renderFooterRow(`Add: CGST (${halfRate}%)`, calcCgst, false)}
+                {renderFooterRow(`Add: SGST (${halfRate}%)`, calcSgst, false)}
               </>
             )}
 
             {/* Grand Total Row */}
-            <div className="flex border-t" style={{ borderColor: borderColor }}>
-              <div className="w-10 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-              <div className="flex-1 border-r text-right p-1 pr-4 font-bold text-lg min-w-0" style={{ borderColor: borderColor, color: themeColor }}>
-                {isGstEnabled ? 'Grand Total' : 'Total'}
-              </div>
-              {/* If GST is NOT enabled, show the weight/quantity summary here */}
-              <div className="w-40 border-r text-center p-1 font-bold text-lg text-slate-900 flex items-center justify-center leading-tight whitespace-pre-line shrink-0 px-1" style={{ borderColor: borderColor, ...contentFontStyle }}>
-                {!isGstEnabled ? displayTotalQty : ''}
-              </div>
-              <div className="w-20 border-r shrink-0" style={{ borderColor: borderColor }}></div>
-              <div className="w-32 text-center p-1 font-bold text-lg text-slate-900 flex items-center justify-center whitespace-nowrap shrink-0 px-1" style={contentFontStyle}>
-                ₹{formatBillNum(totalAmount)}
-              </div>
-            </div>
+            {renderFooterRow(isGstEnabled ? 'Grand Total' : 'Total', totalAmount, !isGstEnabled, true)}
           </div>
 
           {/* Footer Area */}

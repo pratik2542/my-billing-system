@@ -1,4 +1,7 @@
-import { BusinessSettings } from "./types";
+import { BusinessSettings, ColumnId, InvoiceHeaderCustomization } from "./types";
+
+export const DEFAULT_UNMERGED_COLUMN_ORDER: ColumnId[] = ['sn', 'particulars', 'packing', 'qty', 'rate', 'amount'];
+export const DEFAULT_MERGED_COLUMN_ORDER: ColumnId[] = ['sn', 'particulars', 'packingQty', 'rate', 'amount'];
 
 export const DEFAULT_PRODUCT_UNITS = [
   'Kg',
@@ -21,7 +24,29 @@ export const DEFAULT_PRODUCT_UNITS = [
   'Quintal'
 ];
 
-export const DEFAULT_COLUMN_HEADERS = {
+export const DEFAULT_COLUMN_WIDTHS: Record<ColumnId, string> = {
+  sn: 'w-10',
+  particulars: 'flex-1',
+  packing: 'w-24',
+  qty: 'w-16',
+  packingQty: 'w-40',
+  rate: 'w-20',
+  amount: 'w-32',
+};
+
+export const COLUMN_WIDTH_OPTIONS: { label: string; value: string }[] = [
+  { label: 'Compact (w-12)', value: 'w-12' },
+  { label: 'Small (w-16)', value: 'w-16' },
+  { label: 'Compact-Medium (w-20)', value: 'w-20' },
+  { label: 'Normal (w-24)', value: 'w-24' },
+  { label: 'Medium-Wide (w-28)', value: 'w-28' },
+  { label: 'Wide (w-32)', value: 'w-32' },
+  { label: 'Extra Wide (w-36)', value: 'w-36' },
+  { label: 'Large (w-40)', value: 'w-40' },
+  { label: 'Jumbo (w-48)', value: 'w-48' },
+];
+
+export const DEFAULT_COLUMN_HEADERS: InvoiceHeaderCustomization = {
   snHeader: 'No.',
   particularsHeader: 'Details',
   packingHeader: 'Packing',
@@ -32,7 +57,50 @@ export const DEFAULT_COLUMN_HEADERS = {
   mergedPackingQtyHeader: 'Packing / Qty',
   showUnitInItemsTable: true,
   showTotalQuantityInFooter: true,
-  totalQuantityCustomText: ''
+  totalQuantityCustomText: '',
+  columnOrder: DEFAULT_UNMERGED_COLUMN_ORDER,
+  columnWidths: DEFAULT_COLUMN_WIDTHS
+};
+
+export const getEffectiveColumnOrder = (colHeaders?: InvoiceHeaderCustomization): ColumnId[] => {
+  const isMerged = !!colHeaders?.mergePackingAndQty;
+  const rawOrder = colHeaders?.columnOrder;
+
+  const validUnmerged: ColumnId[] = ['sn', 'particulars', 'packing', 'qty', 'rate', 'amount'];
+  const validMerged: ColumnId[] = ['sn', 'particulars', 'packingQty', 'rate', 'amount'];
+  const allowedSet = new Set<ColumnId>(isMerged ? validMerged : validUnmerged);
+
+  if (!rawOrder || !Array.isArray(rawOrder) || rawOrder.length === 0) {
+    return isMerged ? [...DEFAULT_MERGED_COLUMN_ORDER] : [...DEFAULT_UNMERGED_COLUMN_ORDER];
+  }
+
+  const result: ColumnId[] = [];
+
+  rawOrder.forEach((c) => {
+    const col = c as ColumnId;
+    if (isMerged) {
+      if (col === 'packing' || col === 'qty' || col === 'packingQty') {
+        if (!result.includes('packingQty')) result.push('packingQty');
+      } else if (allowedSet.has(col) && !result.includes(col)) {
+        result.push(col);
+      }
+    } else {
+      if (col === 'packingQty') {
+        if (!result.includes('packing')) result.push('packing');
+        if (!result.includes('qty')) result.push('qty');
+      } else if (allowedSet.has(col) && !result.includes(col)) {
+        result.push(col);
+      }
+    }
+  });
+
+  allowedSet.forEach((col) => {
+    if (!result.includes(col)) {
+      result.push(col);
+    }
+  });
+
+  return result;
 };
 
 export interface BillFontOption {

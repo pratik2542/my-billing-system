@@ -3,12 +3,15 @@ import { db, firebaseConfig } from "../firebase";
 import { collection, collectionGroup, doc, getDocs, setDoc, updateDoc, onSnapshot, query, orderBy, limit, deleteDoc } from "firebase/firestore";
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut as fbSignOut } from "firebase/auth";
-import { UserProfile, UserSession, AppErrorLog, UserActivityLog, ActivityCategory } from "../types";
+import { InvoiceTemplate } from "./InvoiceTemplate";
+import { UserProfile, UserSession, AppErrorLog, UserActivityLog, ActivityCategory, BusinessSettings, ColumnId, InvoiceHeaderCustomization } from "../types";
+import { DEFAULT_BUSINESS_SETTINGS, DEFAULT_COLUMN_HEADERS, DEFAULT_UNMERGED_COLUMN_ORDER, DEFAULT_MERGED_COLUMN_ORDER, getEffectiveColumnOrder, DEFAULT_COLUMN_WIDTHS, COLUMN_WIDTH_OPTIONS } from "../constants";
 import {
   Users, ShieldCheck, Activity, AlertTriangle, UserPlus, Lock, Unlock, RefreshCw, Loader2, X,
   Smartphone, Monitor, Tablet, Clock, Sparkles, Bug, BarChart3, CheckCircle2, Eye, Building,
   Upload, Download, KeyRound, Edit, Mail, Calendar, TrendingUp, DollarSign, PieChart, Layers,
-  Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard, Trash2, Sliders
+  Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard, Trash2, Sliders,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Columns, RotateCcw, Save
 } from "lucide-react";
 
 // ---- Helpers ----
@@ -804,6 +807,7 @@ export const AdminPortal: React.FC = () => {
   const [preselectedBusinessId, setPreselectedBusinessId] = useState<string | undefined>(undefined);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [inspectingBusiness, setInspectingBusiness] = useState<{ businessId: string; businessName: string } | null>(null);
 
   // 1. Live User Profiles Listener
   useEffect(() => {
@@ -1061,7 +1065,7 @@ export const AdminPortal: React.FC = () => {
               onEditUser={setEditingUser}
             />
           )
-          : activeTab === "businesses" ? <BusinessesTabContent profiles={enrichedProfiles} onAddMember={openAddUserForBusiness}/>
+          : activeTab === "businesses" ? <BusinessesTabContent profiles={enrichedProfiles} onAddMember={openAddUserForBusiness} onInspectBill={setInspectingBusiness}/>
           : activeTab === "errors" ? <ErrorLogsTabContent errors={allErrors} onRefresh={loadAllErrors}/>
           : <UsageTabContent profiles={enrichedProfiles} allInvoices={allInvoices} allActivityLogs={allActivityLogs} allErrors={allErrors}/>}
         </div>
@@ -1069,6 +1073,7 @@ export const AdminPortal: React.FC = () => {
       {showAddUser && <AddUserModal onClose={() => setShowAddUser(false)} onCreated={() => setShowAddUser(false)} profiles={enrichedProfiles} preselectedBusinessId={preselectedBusinessId}/>}
       {selectedUser && <UserDetailDrawer profile={selectedUser} activityLogs={allActivityLogs} onClose={() => setSelectedUser(null)}/>}
       {editingUser && <EditUserModal profile={editingUser} onClose={() => setEditingUser(null)} onUpdated={() => setEditingUser(null)} />}
+      {inspectingBusiness && <BusinessBillLayoutModal businessId={inspectingBusiness.businessId} businessName={inspectingBusiness.businessName} onClose={() => setInspectingBusiness(null)} />}
     </div>
   );
 };
@@ -1232,7 +1237,11 @@ const UsersTabContent: React.FC<{
 );
 
 // ---- Businesses Tab Content ----
-const BusinessesTabContent: React.FC<{ profiles: UserProfile[]; onAddMember: (bId: string) => void }> = ({ profiles, onAddMember }) => {
+const BusinessesTabContent: React.FC<{
+  profiles: UserProfile[];
+  onAddMember: (bId: string) => void;
+  onInspectBill: (b: { businessId: string; businessName: string }) => void;
+}> = ({ profiles, onAddMember, onInspectBill }) => {
   const businessMap: Record<string, { businessId: string; businessName: string; members: UserProfile[]; totalInvoices: number }> = {};
 
   profiles.forEach(p => {
@@ -1272,19 +1281,28 @@ const BusinessesTabContent: React.FC<{ profiles: UserProfile[]; onAddMember: (bI
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {businessList.map((b) => (
             <div key={b.businessId} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-2">
                 <div>
                   <h4 className="font-bold text-slate-900 text-base flex items-center gap-2">
                     <Building size={18} className="text-indigo-600 shrink-0" /> {b.businessName}
                   </h4>
                   <p className="text-xs text-slate-400 mt-0.5">Workspace ID: {b.businessId}</p>
                 </div>
-                <button
-                  onClick={() => onAddMember(b.businessId)}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shrink-0"
-                >
-                  <UserPlus size={14} /> Add User
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => onInspectBill({ businessId: b.businessId, businessName: b.businessName })}
+                    className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shrink-0"
+                    title="View & Reorder Bill Columns"
+                  >
+                    <Sliders size={14} /> Bill & Columns
+                  </button>
+                  <button
+                    onClick={() => onAddMember(b.businessId)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shrink-0"
+                  >
+                    <UserPlus size={14} /> Add User
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg text-center">
@@ -1323,6 +1341,354 @@ const BusinessesTabContent: React.FC<{ profiles: UserProfile[]; onAddMember: (bI
           ))}
         </div>
       )}
+    </div>
+  );
+};
+
+// ---- Business Bill Layout Modal ----
+interface BusinessBillLayoutModalProps {
+  businessId: string;
+  businessName: string;
+  onClose: () => void;
+}
+
+const SAMPLE_PREVIEW_ITEMS = [
+  { id: '1', productId: 'p1', name: '50 Kg Premium White Sugar', quantity: 2, unit: 'Bag', rate: 2150, amount: 4300, packing: '50 Kg' },
+  { id: '2', productId: 'p2', name: 'Brand Super Tea Powder', quantity: 10, unit: 'Pkt', rate: 180, amount: 1800, packing: '500 Gm' },
+  { id: '3', productId: 'p3', name: 'Refined Sunflower Cooking Oil', quantity: 5, unit: 'Ltr', rate: 145, amount: 725, packing: '1 Ltr Tin' }
+];
+
+const COLUMN_NAMES_MAP: Record<ColumnId, string> = {
+  sn: 'Serial No. (No.)',
+  particulars: 'Item Details (Particulars)',
+  packing: 'Packing Size',
+  qty: 'Quantity (Qty)',
+  packingQty: 'Packing & Qty (Merged)',
+  rate: 'Rate / Price',
+  amount: 'Total Amount'
+};
+
+const BusinessBillLayoutModal: React.FC<BusinessBillLayoutModalProps> = ({ businessId, businessName, onClose }) => {
+  const [settings, setSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, "users", businessId, "settings", "general"),
+      (snap) => {
+        if (snap.exists()) {
+          setSettings({ ...DEFAULT_BUSINESS_SETTINGS, ...snap.data() } as BusinessSettings);
+        } else {
+          setSettings({ ...DEFAULT_BUSINESS_SETTINGS, name: businessName || DEFAULT_BUSINESS_SETTINGS.name });
+        }
+        setLoading(false);
+      },
+      (err) => {
+        console.warn("Failed to load business settings:", err.message);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [businessId, businessName]);
+
+  const colHeaders = settings.columnHeaders || DEFAULT_COLUMN_HEADERS;
+  const activeOrder = getEffectiveColumnOrder(colHeaders);
+
+  const moveColumn = (index: number, direction: 'left' | 'right') => {
+    const newOrder = [...activeOrder];
+    const targetIndex = direction === 'left' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newOrder.length) return;
+    const temp = newOrder[index];
+    newOrder[index] = newOrder[targetIndex];
+    newOrder[targetIndex] = temp;
+
+    setSettings(prev => ({
+      ...prev,
+      columnHeaders: {
+        ...(prev.columnHeaders || DEFAULT_COLUMN_HEADERS),
+        columnOrder: newOrder
+      }
+    }));
+  };
+
+  const handleHeaderChange = (colId: ColumnId, val: string) => {
+    const headerKeyMap: Record<ColumnId, keyof InvoiceHeaderCustomization> = {
+      sn: 'snHeader',
+      particulars: 'particularsHeader',
+      packing: 'packingHeader',
+      qty: 'qtyHeader',
+      packingQty: 'mergedPackingQtyHeader',
+      rate: 'rateHeader',
+      amount: 'amountHeader'
+    };
+    const key = headerKeyMap[colId];
+    setSettings(prev => ({
+      ...prev,
+      columnHeaders: {
+        ...(prev.columnHeaders || DEFAULT_COLUMN_HEADERS),
+        [key]: val
+      }
+    }));
+  };
+
+  const handleWidthChange = (colId: ColumnId, widthVal: string) => {
+    setSettings(prev => ({
+      ...prev,
+      columnHeaders: {
+        ...(prev.columnHeaders || DEFAULT_COLUMN_HEADERS),
+        columnWidths: {
+          ...(prev.columnHeaders?.columnWidths || {}),
+          [colId]: widthVal
+        }
+      }
+    }));
+  };
+
+  const handleToggleMerge = (merged: boolean) => {
+    const newOrder = merged ? [...DEFAULT_MERGED_COLUMN_ORDER] : [...DEFAULT_UNMERGED_COLUMN_ORDER];
+    setSettings(prev => ({
+      ...prev,
+      columnHeaders: {
+        ...(prev.columnHeaders || DEFAULT_COLUMN_HEADERS),
+        mergePackingAndQty: merged,
+        columnOrder: newOrder
+      }
+    }));
+  };
+
+  const handleReset = () => {
+    setSettings(prev => ({
+      ...prev,
+      columnHeaders: {
+        ...DEFAULT_COLUMN_HEADERS,
+        mergePackingAndQty: prev.columnHeaders?.mergePackingAndQty || false,
+        columnOrder: prev.columnHeaders?.mergePackingAndQty ? [...DEFAULT_MERGED_COLUMN_ORDER] : [...DEFAULT_UNMERGED_COLUMN_ORDER]
+      }
+    }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setSaveSuccess(false);
+    try {
+      await setDoc(
+        doc(db, "users", businessId, "settings", "general"),
+        { columnHeaders: settings.columnHeaders || DEFAULT_COLUMN_HEADERS },
+        { merge: true }
+      );
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err: any) {
+      alert("Failed to save column layout: " + (err.message || err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-3 sm:p-6 backdrop-blur-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden border border-slate-200">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white p-4 sm:p-5 flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="font-bold text-lg sm:text-xl flex items-center gap-2">
+              <Columns className="w-5 h-5 text-indigo-400" />
+              <span>Business Bill & Column Layout Inspector</span>
+            </h2>
+            <p className="text-xs text-slate-300 mt-0.5">
+              Workspace: <strong className="text-white">{businessName}</strong> ({businessId})
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <Loader2 className="animate-spin text-indigo-600" size={32} />
+          </div>
+        ) : (
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+            {/* Left Controls Column */}
+            <div className="lg:col-span-5 border-r border-slate-200 bg-slate-50 p-4 sm:p-5 overflow-y-auto flex flex-col justify-between gap-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                  <h3 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                    <Sliders size={16} className="text-indigo-600" /> Bill Table Column Sequence
+                  </h3>
+                  <button onClick={handleReset} className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1 font-semibold">
+                    <RotateCcw size={12} /> Reset Default
+                  </button>
+                </div>
+
+                {/* Column Re-ordering list */}
+                <div className="space-y-2.5">
+                  {activeOrder.map((colId, idx) => {
+                    const headerValue =
+                      colId === 'sn' ? colHeaders.snHeader || 'No.'
+                      : colId === 'particulars' ? colHeaders.particularsHeader || 'Details'
+                      : colId === 'packing' ? colHeaders.packingHeader || 'Packing'
+                      : colId === 'qty' ? colHeaders.qtyHeader || 'Qty'
+                      : colId === 'packingQty' ? colHeaders.mergedPackingQtyHeader || 'Packing / Qty'
+                      : colId === 'rate' ? colHeaders.rateHeader || 'Rate'
+                      : colHeaders.amountHeader || 'Amount';
+
+                    return (
+                      <div key={colId} className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs space-y-2 hover:border-indigo-300 transition-colors">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold flex items-center justify-center shrink-0">
+                              {idx + 1}
+                            </span>
+                            <span className="text-xs font-bold text-slate-900">{COLUMN_NAMES_MAP[colId]}</span>
+                          </div>
+
+                          {/* Left / Right Move Buttons */}
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveColumn(idx, 'left')}
+                              title="Move column up / left"
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 disabled:opacity-30 disabled:hover:bg-slate-100 disabled:hover:text-slate-600 transition-colors"
+                            >
+                              <ArrowUp size={14} className="hidden sm:block" />
+                              <ArrowLeft size={14} className="sm:hidden" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === activeOrder.length - 1}
+                              onClick={() => moveColumn(idx, 'right')}
+                              title="Move column down / right"
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 disabled:opacity-30 disabled:hover:bg-slate-100 disabled:hover:text-slate-600 transition-colors"
+                            >
+                              <ArrowDown size={14} className="hidden sm:block" />
+                              <ArrowRight size={14} className="sm:hidden" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase">Header Label</label>
+                            <input
+                              type="text"
+                              value={headerValue}
+                              onChange={(e) => handleHeaderChange(colId, e.target.value)}
+                              className="w-full mt-0.5 px-2 py-1 border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-indigo-400 outline-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-400 uppercase">Column Width</label>
+                            {colId === 'sn' || colId === 'particulars' ? (
+                              <div className="mt-0.5 px-2 py-1 bg-slate-100 text-slate-500 rounded-lg text-xs font-medium text-center">
+                                {colId === 'sn' ? 'Fixed (w-10)' : 'Auto Flex'}
+                              </div>
+                            ) : (
+                              <select
+                                value={colHeaders.columnWidths?.[colId] || DEFAULT_COLUMN_WIDTHS[colId] || 'w-24'}
+                                onChange={(e) => handleWidthChange(colId, e.target.value)}
+                                className="w-full mt-0.5 px-2 py-1 border border-slate-300 rounded-lg text-xs font-semibold bg-slate-50 focus:ring-2 focus:ring-indigo-400 outline-none"
+                              >
+                                {COLUMN_WIDTH_OPTIONS.map(opt => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Additional Toggles */}
+                <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5 text-xs font-medium text-slate-700">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!colHeaders.mergePackingAndQty}
+                      onChange={(e) => handleToggleMerge(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-400 w-4 h-4"
+                    />
+                    <span>Merge Packing & Quantity into single column</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={colHeaders.showUnitInItemsTable !== false}
+                      onChange={(e) => setSettings(prev => ({
+                        ...prev,
+                        columnHeaders: { ...(prev.columnHeaders || DEFAULT_COLUMN_HEADERS), showUnitInItemsTable: e.target.checked }
+                      }))}
+                      className="rounded text-indigo-600 focus:ring-indigo-400 w-4 h-4"
+                    />
+                    <span>Show product units (e.g. Kg, Pcs, Sq Ft) in table</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={colHeaders.showTotalQuantityInFooter !== false}
+                      onChange={(e) => setSettings(prev => ({
+                        ...prev,
+                        columnHeaders: { ...(prev.columnHeaders || DEFAULT_COLUMN_HEADERS), showTotalQuantityInFooter: e.target.checked }
+                      }))}
+                      className="rounded text-indigo-600 focus:ring-indigo-400 w-4 h-4"
+                    />
+                    <span>Show total quantity / weight in table footer</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Save Button */}
+              <div className="pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors shadow-md disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={16} className="animate-spin" /> : saveSuccess ? <CheckCircle2 size={16} /> : <Save size={16} />}
+                  <span>{saveSuccess ? "Column Order Saved!" : "Save Column Configuration"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Right Live Bill Preview Column */}
+            <div className="lg:col-span-7 bg-slate-900 p-4 overflow-y-auto flex flex-col items-center justify-start">
+              <div className="w-full flex items-center justify-between mb-3 text-white">
+                <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                  <Eye size={14} /> Live Business Bill Preview
+                </span>
+                <span className="text-[11px] text-slate-400 font-medium">Updates in real-time as columns move</span>
+              </div>
+
+              {/* Scale Wrapper for Invoice Template */}
+              <div className="w-full max-w-[800px] overflow-x-auto p-2 flex justify-center">
+                <div className="transform scale-[0.75] origin-top bg-white rounded shadow-2xl">
+                  <InvoiceTemplate
+                    id="admin-bill-layout-preview"
+                    billNo="INV-2026-001"
+                    date={new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    customerName="M/s. Royal Traders & Supermarket"
+                    customerCity="Palitana"
+                    customerMobile="98765 43210"
+                    items={SAMPLE_PREVIEW_ITEMS}
+                    settings={settings}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

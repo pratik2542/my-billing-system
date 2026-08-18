@@ -16,10 +16,10 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
 
   const downloadSampleCSV = () => {
     const csvContent = [
-      'Bill No,Date,Customer Name,Customer City,Item Name,Quantity,Unit,Rate,Amount,Packing',
-      '1001,15/08/2026,Rajesh Patel,Ahmedabad,Guchda Sev,2,kg,250,500,1 kg',
-      '1001,15/08/2026,Rajesh Patel,Ahmedabad,Nylon Pauva,1,kg,150,150,1 kg',
-      '1002,16/08/2026,Mehta Traders,Surat,Special Mix,5,kg,200,1000,500 gm'
+      'Bill No,Date,Customer Name,Customer City,Customer Mobile,Item Name,Quantity,Unit,Rate,Amount,Packing',
+      '1001,15/08/2026,Rajesh Patel,Ahmedabad,9876543210,Guchda Sev,2,kg,250,500,1 kg',
+      '1001,15/08/2026,Rajesh Patel,Ahmedabad,9876543210,Nylon Pauva,1,kg,150,150,1 kg',
+      '1002,16/08/2026,Mehta Traders,Surat,9123456789,Special Mix,5,kg,200,1000,500 gm'
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -72,6 +72,7 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
     const dateIdx = findIdx(['date']);
     const customerIdx = findIdx(['customername', 'customer', 'party']);
     const cityIdx = findIdx(['customercity', 'city', 'location']);
+    const mobileIdx = findIdx(['customermobile', 'mobile', 'phone', 'contact']);
     const itemsSummaryIdx = findIdx(['items', 'itemssummary']);
     const itemNameIdx = findIdx(['itemname', 'productname', 'item', 'product']);
     const qtyIdx = findIdx(['quantity', 'qty']);
@@ -135,6 +136,7 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
       const date = (dateIdx >= 0 && row[dateIdx]) ? row[dateIdx] : new Date().toLocaleDateString('en-GB');
       const customerName = (customerIdx >= 0 && row[customerIdx]) ? row[customerIdx] : 'Cash Sale';
       const customerCity = (cityIdx >= 0 && row[cityIdx]) ? row[cityIdx] : 'Local';
+      const customerMobile = (mobileIdx >= 0 && row[mobileIdx]) ? row[mobileIdx] : '';
       const rowTotal = (totalIdx >= 0 && row[totalIdx]) ? (parseFloat(row[totalIdx]) || 0) : 0;
       
       const key = `${rawBillNo}_${customerName}`.toLowerCase();
@@ -145,6 +147,7 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
           date,
           customerName,
           customerCity,
+          customerMobile,
           items: [],
           total: rowTotal
         };

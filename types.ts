@@ -26,6 +26,8 @@ export interface InvoiceItem {
   packing?: string;
 }
 
+export type ColumnId = 'sn' | 'particulars' | 'packing' | 'qty' | 'packingQty' | 'rate' | 'amount';
+
 export interface InvoiceHeaderCustomization {
   snHeader?: string;
   particularsHeader?: string;
@@ -38,6 +40,8 @@ export interface InvoiceHeaderCustomization {
   showUnitInItemsTable?: boolean; // Show/hide unit like 'Sq Ft' in bill table rows (default true)
   showTotalQuantityInFooter?: boolean; // Show/hide total quantity summary in footer (default true)
   totalQuantityCustomText?: string; // Custom override text or unit for total quantity in footer
+  columnOrder?: string[]; // Array of ColumnId representing custom order of table columns
+  columnWidths?: Partial<Record<ColumnId, string>>; // Custom width classes for table columns
 }
 
 export interface AnalyticsVisibilitySettings {

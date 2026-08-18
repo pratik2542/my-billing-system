@@ -32,7 +32,9 @@ import {
   Check,
   Sliders,
   Palette,
-  Eye
+  Eye,
+  ArrowLeft,
+  ArrowRight
 } from 'lucide-react';
 import { InvoiceGenerator } from './components/InvoiceGenerator';
 import { InvoiceHistory } from './components/InvoiceHistory';
@@ -54,14 +56,20 @@ import {
   ActivityCategory,
   BillFontStyle,
   BillFontScope,
-  BillFontWeight
+  BillFontWeight,
+  ColumnId
 } from './types';
 import {
   DEFAULT_BUSINESS_SETTINGS,
   DEFAULT_PRODUCT_UNITS,
   DEFAULT_COLUMN_HEADERS,
   BILL_FONT_OPTIONS,
-  getBillFontFamily
+  getBillFontFamily,
+  getEffectiveColumnOrder,
+  DEFAULT_UNMERGED_COLUMN_ORDER,
+  DEFAULT_MERGED_COLUMN_ORDER,
+  DEFAULT_COLUMN_WIDTHS,
+  COLUMN_WIDTH_OPTIONS
 } from './constants';
 
 // Firebase Imports
@@ -2950,6 +2958,129 @@ const compressImageToMaxDataUrl = (
                               className="w-full p-2 sm:p-2.5 border border-slate-300 rounded-lg text-sm bg-white"
                             />
                           </div>
+                        </div>
+
+                        {/* Table Column Reordering Control */}
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                              <Sliders className="w-4 h-4 text-purple-600" />
+                              <span>Bill Table Column Order</span>
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={() => handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: {
+                                  ...DEFAULT_COLUMN_HEADERS,
+                                  ...tempSettings.columnHeaders,
+                                  columnOrder: tempSettings.columnHeaders?.mergePackingAndQty ? [...DEFAULT_MERGED_COLUMN_ORDER] : [...DEFAULT_UNMERGED_COLUMN_ORDER]
+                                }
+                              })}
+                              className="text-[11px] text-purple-600 hover:text-purple-800 font-semibold"
+                            >
+                              Reset Order
+                            </button>
+                          </div>
+                          <p className="text-[11px] sm:text-xs text-slate-500 mb-3">
+                            Reorder your bill table columns. Click the left and right arrow buttons to move any column position.
+                          </p>
+
+                          {(() => {
+                            const colHdrs = tempSettings.columnHeaders || DEFAULT_COLUMN_HEADERS;
+                            const currentOrder = getEffectiveColumnOrder(colHdrs);
+                            const colLabels: Record<ColumnId, string> = {
+                              sn: colHdrs.snHeader || 'No.',
+                              particulars: colHdrs.particularsHeader || 'Details',
+                              packing: colHdrs.packingHeader || 'Packing',
+                              qty: colHdrs.qtyHeader || 'Qty',
+                              packingQty: colHdrs.mergedPackingQtyHeader || 'Packing / Qty',
+                              rate: colHdrs.rateHeader || 'Rate',
+                              amount: colHdrs.amountHeader || 'Amount'
+                            };
+
+                            const moveCol = (index: number, direction: 'left' | 'right') => {
+                              const newOrder = [...currentOrder];
+                              const targetIdx = direction === 'left' ? index - 1 : index + 1;
+                              if (targetIdx < 0 || targetIdx >= newOrder.length) return;
+                              const tmp = newOrder[index];
+                              newOrder[index] = newOrder[targetIdx];
+                              newOrder[targetIdx] = tmp;
+
+                              handleTempSettingsChange({
+                                ...tempSettings,
+                                columnHeaders: {
+                                  ...DEFAULT_COLUMN_HEADERS,
+                                  ...tempSettings.columnHeaders,
+                                  columnOrder: newOrder
+                                }
+                              });
+                            };
+
+                            return (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                                {currentOrder.map((colId, idx) => (
+                                  <div key={colId} className="bg-white border border-slate-200 rounded-xl p-2.5 flex flex-col justify-between shadow-xs">
+                                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                                      <span className="text-[10px] font-bold text-slate-400">Col {idx + 1}</span>
+                                      <div className="flex items-center gap-0.5">
+                                        <button
+                                          type="button"
+                                          disabled={idx === 0}
+                                          onClick={() => moveCol(idx, 'left')}
+                                          className="p-1 rounded bg-slate-100 hover:bg-purple-100 text-slate-600 hover:text-purple-700 disabled:opacity-30"
+                                          title="Move Left"
+                                        >
+                                          <ArrowLeft size={12} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={idx === currentOrder.length - 1}
+                                          onClick={() => moveCol(idx, 'right')}
+                                          className="p-1 rounded bg-slate-100 hover:bg-purple-100 text-slate-600 hover:text-purple-700 disabled:opacity-30"
+                                          title="Move Right"
+                                        >
+                                          <ArrowRight size={12} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="font-bold text-xs text-slate-800 truncate mb-1">
+                                      {colLabels[colId]}
+                                    </div>
+
+                                    {colId === 'sn' || colId === 'particulars' ? (
+                                      <div className="mt-1 text-[10px] bg-slate-100 text-slate-500 py-1 px-1.5 rounded text-center font-medium">
+                                        {colId === 'sn' ? 'Fixed (w-10)' : 'Auto Flex'}
+                                      </div>
+                                    ) : (
+                                      <div className="mt-1">
+                                        <label className="block text-[9px] font-semibold text-slate-400 uppercase">Width</label>
+                                        <select
+                                          value={tempSettings.columnHeaders?.columnWidths?.[colId] || DEFAULT_COLUMN_WIDTHS[colId] || 'w-24'}
+                                          onChange={e => handleTempSettingsChange({
+                                            ...tempSettings,
+                                            columnHeaders: {
+                                              ...DEFAULT_COLUMN_HEADERS,
+                                              ...tempSettings.columnHeaders,
+                                              columnWidths: {
+                                                ...(tempSettings.columnHeaders?.columnWidths || {}),
+                                                [colId]: e.target.value
+                                              }
+                                            }
+                                          })}
+                                          className="w-full text-[10px] p-1 border border-slate-300 rounded bg-slate-50 font-medium text-slate-700 outline-none focus:border-purple-500"
+                                        >
+                                          {COLUMN_WIDTH_OPTIONS.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Footer Total Quantity Toggle in Settings */}
