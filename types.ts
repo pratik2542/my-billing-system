@@ -124,6 +124,43 @@ export interface PaymentEntry {
   note?: string;
 }
 
+export type InvoiceAuditAction = 
+  | 'created' 
+  | 'edited' 
+  | 'deleted' 
+  | 'restored' 
+  | 'payment_added' 
+  | 'payment_deleted';
+
+export interface InvoiceFieldChange {
+  field: string;
+  label: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export interface InvoiceAuditEntry {
+  id: string;
+  action: InvoiceAuditAction;
+  timestamp: number;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
+  userRole?: string;
+  device?: string;
+  summary: string;
+  details?: string;
+  changes?: InvoiceFieldChange[];
+  snapshot?: {
+    total: number;
+    itemsCount: number;
+    customerName: string;
+    customerCity?: string;
+    date: string;
+    itemsSummary?: string;
+  };
+}
+
 export interface Invoice {
   id: string; // Bill No
   date: string;
@@ -143,6 +180,31 @@ export interface Invoice {
   // Unit & Total quantity display customizations
   showUnitInItemsTable?: boolean;
   customTotalQtyText?: string;
+
+  // User Attribution & Multi-user Tracking
+  createdBy?: string;
+  createdByName?: string;
+  createdByEmail?: string;
+  createdAt?: number;
+  updatedBy?: string;
+  updatedByName?: string;
+  updatedByEmail?: string;
+  updatedAt?: number;
+  billedBy?: string; // Operator / Staff member who prepared the bill
+
+  // Soft Deletion & Trash
+  isDeleted?: boolean;
+  deletedAt?: number;
+  deletedBy?: string;
+  deletedByName?: string;
+  deletedByEmail?: string;
+  deleteReason?: string;
+  restoredAt?: number;
+  restoredBy?: string;
+  restoredByName?: string;
+
+  // Audit Trail & Revision History
+  auditTrail?: InvoiceAuditEntry[];
 }
 
 export enum AppTab {

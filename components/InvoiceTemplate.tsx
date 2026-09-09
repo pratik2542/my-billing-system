@@ -19,6 +19,9 @@ interface InvoiceTemplateProps {
   payments?: PaymentEntry[];
   showUnitInItemsTable?: boolean;
   customTotalQtyText?: string;
+  billedBy?: string;
+  createdByName?: string;
+  isDeleted?: boolean;
 }
 
 // Helper to create lighter shades for backgrounds
@@ -89,7 +92,10 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   gstRate: propGstRate,
   payments,
   showUnitInItemsTable,
-  customTotalQtyText
+  customTotalQtyText,
+  billedBy,
+  createdByName,
+  isDeleted
 }) => {
   // Calculate financials (rounded to 2 decimals)
   const calcSubtotal = Math.round(items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0) * 100) / 100;
@@ -347,7 +353,14 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
     >
       <div className="h-full flex flex-col">
         {/* Border Box */}
-        <div className="border-2 flex flex-col min-h-[1050px] justify-between flex-1" style={{ borderColor: borderColor }}>
+        <div className="border-2 flex flex-col min-h-[1050px] justify-between flex-1 relative overflow-hidden" style={{ borderColor: borderColor }}>
+          {isDeleted && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 select-none">
+              <div className="border-8 border-red-500/25 text-red-500/25 font-black text-5xl sm:text-6xl uppercase tracking-widest px-10 py-5 rotate-[-25deg] rounded-3xl">
+                CANCELLED / TRASHED
+              </div>
+            </div>
+          )}
 
           {/* Header Section */}
           <div className={`border-b-2 p-4 ${!isFullBillFont ? 'font-serif-custom' : ''} text-center relative`} style={{ color: themeColor, borderColor: borderColor }}>
@@ -596,6 +609,11 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                   <div className="text-[10px] text-left leading-snug italic text-slate-500">
                     <span className="font-bold not-italic text-slate-700">Declaration:</span><br />
                     {settings.declarationText || "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct."}
+                  </div>
+                )}
+                {(billedBy || createdByName) && (
+                  <div className="text-[10px] text-left text-slate-500 mt-1 not-italic font-medium">
+                    Billed by: <span className="font-bold text-slate-700">{billedBy || createdByName}</span>
                   </div>
                 )}
               </div>

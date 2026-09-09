@@ -45,12 +45,15 @@ import { PaymentTrackerModal } from './components/PaymentTrackerModal';
 import { PaymentManagement } from './components/PaymentManagement';
 import { AdminPortal, parseDeviceInfo } from './components/AdminPortal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { formatBillNum } from './components/InvoiceTemplate';
 import {
   Product,
   Customer,
   BusinessSettings,
   AppTab,
   Invoice,
+  InvoiceAuditEntry,
+  InvoiceFieldChange,
   PaymentEntry,
   UserProfile,
   ActivityCategory,
@@ -238,6 +241,7 @@ const App: React.FC = () => {
 
   // --- User Profile State & Concurrent Session Control ---
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [businessMembers, setBusinessMembers] = useState<Array<{ uid: string; displayName?: string; email: string; role?: string }>>([]);
   const [hasConcurrentSession, setHasConcurrentSession] = useState(false);
   const [otherSessionInfo, setOtherSessionInfo] = useState<{ device?: string; time?: number }>({});
   const [isClaimingSession, setIsClaimingSession] = useState(false);
@@ -533,6 +537,55 @@ const App: React.FC = () => {
     };
   }, [user, userProfile?.businessId]);
 
+  // Load business members for current workspace
+  useEffect(() => {
+    if (!user) {
+      setBusinessMembers([]);
+      return;
+    }
+    const targetBizId = (userProfile?.businessId && userProfile.businessId !== 'global') ? userProfile.businessId : user.uid;
+    if (!targetBizId) return;
+
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'userProfiles'));
+        const members: Array<{ uid: string; displayName?: string; email: string; role?: string }> = [];
+        snap.forEach(d => {
+          const data = d.data() as UserProfile;
+          const uBizId = (data.businessId && data.businessId !== 'global') ? data.businessId : data.uid;
+          if (uBizId === targetBizId || data.uid === targetBizId || d.id === targetBizId) {
+            members.push({
+              uid: data.uid,
+              displayName: data.displayName || data.email?.split('@')[0],
+              email: data.email,
+              role: data.role
+            });
+          }
+        });
+        if (members.length > 0) {
+          setBusinessMembers(members);
+        } else if (user) {
+          setBusinessMembers([{
+            uid: user.uid,
+            displayName: userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'Admin',
+            email: user.email || '',
+            role: userProfile?.role || 'owner'
+          }]);
+        }
+      } catch (e) {
+        console.warn('Could not fetch business members list:', e);
+        if (user) {
+          setBusinessMembers([{
+            uid: user.uid,
+            displayName: userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'Admin',
+            email: user.email || '',
+            role: userProfile?.role || 'owner'
+          }]);
+        }
+      }
+    })();
+  }, [user, userProfile?.businessId]);
+
   const handleClaimSession = async () => {
     if (!user) return;
     setIsClaimingSession(true);
@@ -784,6 +837,10 @@ const App: React.FC = () => {
       const isEditing = editingInvoice && editingInvoice.id === invoice.id;
       const invCol = getInvoicesCol();
       const settingsRef = getSettingsRef();
+      const now = Date.now();
+      const currentUserName = invoice.billedBy || userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'User';
+      const currentUserEmail = user.email || undefined;
+      const currentUserRole = userProfile?.role || 'operator';
 
       if (!isEditing) {
         // Prevent duplicate Bill No collision and accidental overwriting of existing invoices
@@ -801,21 +858,42 @@ const App: React.FC = () => {
           console.warn(`Bill #${invoice.id} already exists! Reassigning to Bill #${safeId} to prevent overwriting.`);
           invoice.id = safeId;
         }
-      }
 
-      const cleanInvoice = sanitizeForFirestore(invoice);
+        invoice.createdBy = user.uid;
+        invoice.createdByName = currentUserName;
+        invoice.createdByEmail = currentUserEmail;
+        invoice.createdAt = now;
+        invoice.billedBy = invoice.billedBy || currentUserName;
 
-      if (isEditing) {
-        await setDoc(doc(invCol, invoice.id), cleanInvoice);
-        logUserActivity('invoice', 'Edit Invoice', `Updated Bill #${invoice.id} (₹${invoice.total})`);
-      } else {
+        const createEntry: InvoiceAuditEntry = {
+          id: `aud_${now}_${Math.random().toString(36).slice(2, 7)}`,
+          action: 'created',
+          timestamp: now,
+          userId: user.uid,
+          userName: currentUserName,
+          userEmail: currentUserEmail,
+          userRole: currentUserRole,
+          summary: `Generated Bill #${invoice.id} for ${invoice.customerName} (₹${formatBillNum(invoice.total)}, ${invoice.items.length} items)`,
+          snapshot: {
+            total: invoice.total,
+            itemsCount: invoice.items.length,
+            customerName: invoice.customerName,
+            customerCity: invoice.customerCity,
+            date: invoice.date,
+            itemsSummary: invoice.items.slice(0, 3).map(i => `${i.name} x ${i.quantity}`).join(', ')
+          }
+        };
+        invoice.auditTrail = [createEntry];
+
+        const cleanInvoice = sanitizeForFirestore(invoice);
+
         const numFromId = parseInt((invoice.id || '').toString().replace(/[^0-9]/g, ''), 10);
         const nextNo = Math.max((settings.nextInvoiceNumber || 0) + 1, !isNaN(numFromId) ? numFromId + 1 : 1);
 
         // Save the invoice document first
         await setDoc(doc(invCol, invoice.id), cleanInvoice);
 
-        // Update settings counter & user profile count independently (non-blocking if permission restricted)
+        // Update settings counter & user profile count independently
         updateDoc(settingsRef, { nextInvoiceNumber: nextNo }).catch(err => {
           console.warn("Could not update nextInvoiceNumber in settings document:", err);
         });
@@ -825,6 +903,85 @@ const App: React.FC = () => {
 
         // Update local state optimistically
         setSettings(prev => ({ ...prev, nextInvoiceNumber: nextNo }));
+      } else {
+        // Editing existing invoice - compute detailed changes diff
+        const existingInv = editingInvoice || invoices.find(inv => inv.id === invoice.id);
+        const changes: InvoiceFieldChange[] = [];
+        const changePhrases: string[] = [];
+
+        if (existingInv) {
+          if (existingInv.customerName !== invoice.customerName) {
+            changes.push({ field: 'customerName', label: 'Customer Name', oldValue: existingInv.customerName, newValue: invoice.customerName });
+            changePhrases.push(`Customer: "${existingInv.customerName}" → "${invoice.customerName}"`);
+          }
+          if ((existingInv.customerCity || '') !== (invoice.customerCity || '')) {
+            changes.push({ field: 'customerCity', label: 'City', oldValue: existingInv.customerCity || 'None', newValue: invoice.customerCity || 'None' });
+          }
+          if ((existingInv.customerMobile || '') !== (invoice.customerMobile || '')) {
+            changes.push({ field: 'customerMobile', label: 'Mobile', oldValue: existingInv.customerMobile || 'None', newValue: invoice.customerMobile || 'None' });
+          }
+          if (existingInv.date !== invoice.date) {
+            changes.push({ field: 'date', label: 'Date', oldValue: existingInv.date, newValue: invoice.date });
+            changePhrases.push(`Date: ${existingInv.date} → ${invoice.date}`);
+          }
+          if (Math.abs(existingInv.total - invoice.total) > 0.01) {
+            changes.push({ field: 'total', label: 'Grand Total', oldValue: `₹${formatBillNum(existingInv.total)}`, newValue: `₹${formatBillNum(invoice.total)}` });
+            changePhrases.push(`Total: ₹${formatBillNum(existingInv.total)} → ₹${formatBillNum(invoice.total)}`);
+          }
+          if (existingInv.gstRate !== invoice.gstRate) {
+            changes.push({ field: 'gstRate', label: 'GST Rate', oldValue: `${existingInv.gstRate || 0}%`, newValue: `${invoice.gstRate || 0}%` });
+          }
+
+          // Items diff
+          const oldItems = existingInv.items || [];
+          const newItems = invoice.items || [];
+          const oldItemNames = oldItems.map(i => `${i.name} (x${i.quantity})`).join(', ');
+          const newItemNames = newItems.map(i => `${i.name} (x${i.quantity})`).join(', ');
+          if (oldItemNames !== newItemNames || oldItems.length !== newItems.length) {
+            changes.push({ field: 'items', label: 'Items List', oldValue: oldItemNames || 'No items', newValue: newItemNames || 'No items' });
+            changePhrases.push(`Items modified (${newItems.length} items)`);
+          }
+        }
+
+        const summaryText = changePhrases.length > 0 
+          ? `Bill #${invoice.id} edited: ${changePhrases.join('; ')}`
+          : `Bill #${invoice.id} updated by ${currentUserName}`;
+
+        const editEntry: InvoiceAuditEntry = {
+          id: `aud_${now}_${Math.random().toString(36).slice(2, 7)}`,
+          action: 'edited',
+          timestamp: now,
+          userId: user.uid,
+          userName: currentUserName,
+          userEmail: currentUserEmail,
+          userRole: currentUserRole,
+          summary: summaryText,
+          changes: changes.length > 0 ? changes : undefined,
+          snapshot: {
+            total: invoice.total,
+            itemsCount: invoice.items.length,
+            customerName: invoice.customerName,
+            customerCity: invoice.customerCity,
+            date: invoice.date,
+            itemsSummary: invoice.items.slice(0, 3).map(i => `${i.name} x ${i.quantity}`).join(', ')
+          }
+        };
+
+        const updatedAuditTrail = [...(existingInv?.auditTrail || []), editEntry];
+
+        invoice.updatedBy = user.uid;
+        invoice.updatedByName = currentUserName;
+        invoice.updatedByEmail = currentUserEmail;
+        invoice.updatedAt = now;
+        invoice.auditTrail = updatedAuditTrail;
+        if (existingInv?.createdBy) invoice.createdBy = existingInv.createdBy;
+        if (existingInv?.createdByName) invoice.createdByName = existingInv.createdByName;
+        if (existingInv?.createdByEmail) invoice.createdByEmail = existingInv.createdByEmail;
+        if (existingInv?.createdAt) invoice.createdAt = existingInv.createdAt;
+
+        const cleanInvoice = sanitizeForFirestore(invoice);
+        await setDoc(doc(invCol, invoice.id), cleanInvoice);
+        logUserActivity('invoice', 'Edit Invoice', `Updated Bill #${invoice.id} (₹${invoice.total})`);
       }
     } catch (e: any) {
       console.error("Error saving invoice: ", e);
@@ -1193,15 +1350,138 @@ const compressImageToMaxDataUrl = (
   // --- Invoice Handlers ---
   const handleDeleteInvoice = async (invoiceId: string) => {
     if (!user) return;
-    if (!window.confirm("Are you sure you want to delete this invoice? This action cannot be undone.")) return;
+    if (!window.confirm(`Move Bill #${invoiceId} to Trash? You can view and restore it anytime.`)) return;
     try {
-      await deleteDoc(doc(getInvoicesCol(), invoiceId));
-      updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(-1) }).catch(() => {});
-      logUserActivity('invoice', 'Delete Invoice', `Deleted Bill #${invoiceId}`);
-      alert('Invoice deleted successfully!');
-    } catch (e) {
+      const invRef = doc(getInvoicesCol(), invoiceId);
+      const invSnap = await getDoc(invRef);
+      const current = invSnap.exists() ? (invSnap.data() as Invoice) : invoices.find(i => i.id === invoiceId);
+
+      const userName = userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'User';
+      const delEntry: InvoiceAuditEntry = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        action: 'deleted',
+        timestamp: Date.now(),
+        userId: user.uid,
+        userName: userName,
+        userEmail: user.email || undefined,
+        userRole: userProfile?.role || 'staff',
+        summary: `Bill #${invoiceId} moved to Trash by ${userName}`,
+        snapshot: current ? {
+          total: current.total,
+          itemsCount: current.items?.length || 0,
+          customerName: current.customerName,
+          customerCity: current.customerCity,
+          date: current.date
+        } : undefined
+      };
+
+      const updatedAudit = [...(current?.auditTrail || []), delEntry];
+
+      await updateDoc(invRef, sanitizeForFirestore({
+        isDeleted: true,
+        deletedAt: Date.now(),
+        deletedBy: user.uid,
+        deletedByName: userName,
+        deletedByEmail: user.email || '',
+        auditTrail: updatedAudit
+      }));
+
+      logUserActivity('invoice', 'Delete Invoice', `Moved Bill #${invoiceId} to Trash`);
+      alert(`Invoice #${invoiceId} moved to Trash. You can restore it anytime from the Trash tab.`);
+    } catch (e: any) {
       console.error("Error deleting invoice:", e);
-      alert("Failed to delete invoice. Please try again.");
+      alert("Failed to delete invoice: " + (e?.message || "Unknown error"));
+    }
+  };
+
+  const handleRestoreInvoice = async (invoiceId: string) => {
+    if (!user) return;
+    try {
+      const invRef = doc(getInvoicesCol(), invoiceId);
+      const invSnap = await getDoc(invRef);
+      const current = invSnap.exists() ? (invSnap.data() as Invoice) : invoices.find(i => i.id === invoiceId);
+
+      const userName = userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'User';
+      const restEntry: InvoiceAuditEntry = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        action: 'restored',
+        timestamp: Date.now(),
+        userId: user.uid,
+        userName: userName,
+        userEmail: user.email || undefined,
+        userRole: userProfile?.role || 'staff',
+        summary: `Bill #${invoiceId} restored from Trash by ${userName}`,
+        snapshot: current ? {
+          total: current.total,
+          itemsCount: current.items?.length || 0,
+          customerName: current.customerName,
+          customerCity: current.customerCity,
+          date: current.date
+        } : undefined
+      };
+
+      const updatedAudit = [...(current?.auditTrail || []), restEntry];
+
+      await updateDoc(invRef, sanitizeForFirestore({
+        isDeleted: false,
+        restoredAt: Date.now(),
+        restoredBy: user.uid,
+        restoredByName: userName,
+        auditTrail: updatedAudit
+      }));
+
+      logUserActivity('invoice', 'Restore Invoice', `Restored Bill #${invoiceId} from Trash`);
+      alert(`Invoice #${invoiceId} restored successfully!`);
+    } catch (e: any) {
+      console.error("Error restoring invoice:", e);
+      alert("Failed to restore invoice: " + (e?.message || "Unknown error"));
+    }
+  };
+
+  const handlePermanentDeleteInvoice = async (invoiceId: string) => {
+    if (!user || !isMainAdminUser(user)) {
+      alert("Only the Main Administrator can permanently delete invoices from the database.");
+      return;
+    }
+    if (!window.confirm(`⚠️ PERMANENTLY DELETE Bill #${invoiceId}?\n\nWARNING: This will completely remove this bill and its entire audit trail from the database.\n\nThis action CANNOT be undone. You will be able to reuse Bill #${invoiceId} if desired.\n\nAre you sure you want to permanently delete this bill?`)) {
+      return;
+    }
+    try {
+      const invRef = doc(getInvoicesCol(), invoiceId);
+      await deleteDoc(invRef);
+      updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(-1) }).catch(() => {});
+      logUserActivity('invoice', 'Permanent Delete Invoice', `Permanently deleted Bill #${invoiceId} from database`);
+      alert(`Bill #${invoiceId} has been permanently deleted from the database.`);
+    } catch (e: any) {
+      console.error("Error permanently deleting invoice:", e);
+      alert("Failed to permanently delete invoice: " + (e?.message || "Unknown error"));
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    if (!user || !isMainAdminUser(user)) {
+      alert("Only the Main Administrator can permanently empty trash.");
+      return;
+    }
+    const trashedInvoices = invoices.filter(inv => inv.isDeleted);
+    if (trashedInvoices.length === 0) {
+      alert("Trash is already empty.");
+      return;
+    }
+    if (!window.confirm(`⚠️ PERMANENTLY DELETE ALL ${trashedInvoices.length} TRASHED INVOICES?\n\nWARNING: This will permanently wipe all ${trashedInvoices.length} deleted bills from the database.\n\nThis action CANNOT be undone. Are you sure you want to empty the trash?`)) {
+      return;
+    }
+    try {
+      const invCol = getInvoicesCol();
+      for (const inv of trashedInvoices) {
+        await deleteDoc(doc(invCol, inv.id));
+      }
+      updateDoc(doc(db, 'userProfiles', user.uid), { invoiceCount: increment(-trashedInvoices.length) }).catch(() => {});
+      logUserActivity('invoice', 'Empty Trash', `Permanently deleted ${trashedInvoices.length} trashed invoices`);
+      alert(`Successfully permanently deleted ${trashedInvoices.length} trashed invoices.`);
+    } catch (e: any) {
+      console.error("Error emptying trash:", e);
+      alert("Failed to empty trash: " + (e?.message || "Unknown error"));
     }
   };
 
@@ -1225,10 +1505,37 @@ const compressImageToMaxDataUrl = (
     if (!invSnap.exists()) throw new Error('Invoice not found');
     const current = invSnap.data() as Invoice;
     const updatedPayments = [...(current.payments || []), payment];
-    await updateDoc(invRef, { payments: updatedPayments });
+
+    const userName = userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'User';
+    const payEntry: InvoiceAuditEntry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      action: 'payment_added',
+      timestamp: Date.now(),
+      userId: user.uid,
+      userName: userName,
+      userEmail: user.email || undefined,
+      userRole: userProfile?.role || 'staff',
+      summary: `Payment of ₹${formatBillNum(payment.amount)} (${payment.mode}) recorded for Bill #${invoiceId}`,
+      details: payment.note ? `Note: ${payment.note}` : undefined,
+      snapshot: {
+        total: current.total,
+        itemsCount: current.items?.length || 0,
+        customerName: current.customerName,
+        customerCity: current.customerCity,
+        date: current.date
+      }
+    };
+
+    const updatedAudit = [...(current.auditTrail || []), payEntry];
+
+    await updateDoc(invRef, sanitizeForFirestore({
+      payments: updatedPayments,
+      auditTrail: updatedAudit
+    }));
+
     logUserActivity('payment', 'Record Payment', `Recorded ₹${payment.amount} (${payment.mode}) for Bill #${invoiceId}`);
     // Update local paymentInvoice state so modal reflects immediately
-    setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments } : prev);
+    setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments, auditTrail: updatedAudit } : prev);
   };
 
   const handleDeletePayment = async (invoiceId: string, paymentId: string) => {
@@ -1238,10 +1545,37 @@ const compressImageToMaxDataUrl = (
     const invSnap = await getDoc(invRef);
     if (!invSnap.exists()) throw new Error('Invoice not found');
     const current = invSnap.data() as Invoice;
+    const targetPayment = (current.payments || []).find(p => p.id === paymentId);
     const updatedPayments = (current.payments || []).filter(p => p.id !== paymentId);
-    await updateDoc(invRef, { payments: updatedPayments });
+
+    const userName = userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'User';
+    const delPayEntry: InvoiceAuditEntry = {
+      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      action: 'payment_deleted',
+      timestamp: Date.now(),
+      userId: user.uid,
+      userName: userName,
+      userEmail: user.email || undefined,
+      userRole: userProfile?.role || 'staff',
+      summary: `Payment of ₹${formatBillNum(targetPayment?.amount || 0)} (${targetPayment?.mode || 'N/A'}) removed from Bill #${invoiceId}`,
+      snapshot: {
+        total: current.total,
+        itemsCount: current.items?.length || 0,
+        customerName: current.customerName,
+        customerCity: current.customerCity,
+        date: current.date
+      }
+    };
+
+    const updatedAudit = [...(current.auditTrail || []), delPayEntry];
+
+    await updateDoc(invRef, sanitizeForFirestore({
+      payments: updatedPayments,
+      auditTrail: updatedAudit
+    }));
+
     // Update local paymentInvoice state so modal reflects immediately
-    setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments } : prev);
+    setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments, auditTrail: updatedAudit } : prev);
   };
 
   // --- Logo Handlers ---
@@ -1593,6 +1927,8 @@ const compressImageToMaxDataUrl = (
                 invoices={invoices}
                 settings={settings}
                 enablePaymentTracking={isPaymentTrackingActive}
+                currentUserDisplayName={userProfile?.displayName || user?.displayName || user?.email?.split('@')[0]}
+                businessMembers={businessMembers}
                 onUpdateSettings={handleUpdateSettings}
                 onSaveInvoice={handleSaveInvoice}
                 onUnsavedChanges={(hasChanges) => setHasUnsavedChanges(hasChanges)}
@@ -1611,11 +1947,16 @@ const compressImageToMaxDataUrl = (
                 customers={customers}
                 settings={settings}
                 onDeleteInvoice={handleDeleteInvoice}
+                onRestoreInvoice={handleRestoreInvoice}
+                onPermanentDeleteInvoice={handlePermanentDeleteInvoice}
+                onEmptyTrash={handleEmptyTrash}
                 onEditInvoice={handleEditInvoice}
                 onManagePayments={handleManagePayments}
                 enablePaymentTracking={isPaymentTrackingActive}
                 csvImportAllowed={!!userProfile?.csvImportAllowed}
                 onImportInvoices={handleImportInvoices}
+                businessMembers={businessMembers}
+                isMainAdmin={isMainAdminUser(user)}
               />
             </ErrorBoundary>
           </div>
@@ -1624,7 +1965,7 @@ const compressImageToMaxDataUrl = (
         {activeTab === AppTab.PAYMENTS && isPaymentTrackingActive && (
           <ErrorBoundary fallbackTitle="Error loading Payment Management">
             <PaymentManagement
-              invoices={invoices}
+              invoices={invoices.filter(inv => !inv.isDeleted)}
               customers={customers}
               settings={settings}
               onManagePayments={handleManagePayments}
@@ -1636,7 +1977,7 @@ const compressImageToMaxDataUrl = (
         {activeTab === AppTab.ANALYTICS && (
           <ErrorBoundary fallbackTitle="Error loading Analytics Dashboard">
             <AnalyticsDashboard
-              invoices={invoices}
+              invoices={invoices.filter(inv => !inv.isDeleted)}
               products={products}
               customers={customers}
               settings={{
@@ -3452,7 +3793,7 @@ const compressImageToMaxDataUrl = (
       {selectedCustomerForModal && canViewCustomerSpending && (
         <CustomerSpendingModal
           customer={selectedCustomerForModal}
-          invoices={invoices}
+          invoices={invoices.filter(inv => !inv.isDeleted)}
           settings={settings}
           onClose={() => setSelectedCustomerForModal(null)}
         />
@@ -3462,7 +3803,7 @@ const compressImageToMaxDataUrl = (
       {selectedProductForModal && hasProductAnalysisPermission && (
         <ProductAnalysisModal
           product={selectedProductForModal}
-          invoices={invoices}
+          invoices={invoices.filter(inv => !inv.isDeleted)}
           customers={customers}
           settings={settings}
           onClose={() => setSelectedProductForModal(null)}

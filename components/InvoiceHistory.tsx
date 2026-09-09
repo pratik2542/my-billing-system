@@ -1,20 +1,45 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Invoice, BusinessSettings, Customer } from '../types';
-import { Search, Calendar, Eye, X, Printer, Download, Upload, Edit, Trash2, Wallet, History, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { 
+  Search, 
+  Calendar, 
+  Eye, 
+  X, 
+  Printer, 
+  Download, 
+  Upload, 
+  Edit, 
+  Trash2, 
+  Wallet, 
+  History, 
+  ChevronLeft, 
+  ChevronRight, 
+  ChevronsLeft, 
+  ChevronsRight,
+  RotateCcw,
+  User,
+  AlertTriangle
+} from 'lucide-react';
 import { InvoiceTemplate, formatBillNum } from './InvoiceTemplate';
 import { PaymentStatusBadge } from './PaymentTrackerModal';
 import { InvoiceImportModal } from './InvoiceImportModal';
+import { InvoiceAuditTrailModal } from './InvoiceAuditTrailModal';
 
 interface InvoiceHistoryProps {
   invoices: Invoice[];
   customers?: Customer[];
   settings: BusinessSettings;
   onDeleteInvoice?: (invoiceId: string) => void;
+  onRestoreInvoice?: (invoiceId: string) => void;
+  onPermanentDeleteInvoice?: (invoiceId: string) => void;
+  onEmptyTrash?: () => void;
   onEditInvoice?: (invoice: Invoice) => void;
   onManagePayments?: (invoice: Invoice) => void;
   enablePaymentTracking?: boolean;
   csvImportAllowed?: boolean;
   onImportInvoices?: (invoices: Invoice[]) => Promise<void>;
+  businessMembers?: Array<{ uid: string; displayName?: string; email: string; role?: string }>;
+  isMainAdmin?: boolean;
 }
 
 const getPaymentStatus = (inv: Invoice): 'unpaid' | 'partial' | 'paid' => {
@@ -30,17 +55,25 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
   customers,
   settings,
   onDeleteInvoice,
+  onRestoreInvoice,
+  onPermanentDeleteInvoice,
+  onEmptyTrash,
   onEditInvoice,
   onManagePayments,
   enablePaymentTracking = true,
   csvImportAllowed = false,
-  onImportInvoices
+  onImportInvoices,
+  businessMembers = [],
+  isMainAdmin = false
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [showDateFilter, setShowDateFilter] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'active' | 'deleted' | 'all'>('active');
+  const [userFilter, setUserFilter] = useState<string>('all');
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
+  const [auditTrailInvoice, setAuditTrailInvoice] = useState<Invoice | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
 
@@ -114,13 +147,54 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
     return '';
   }, [customerPhoneMap]);
 
+  // Active / Trashed bill counts
+  const counts = useMemo(() => {
+    let active = 0;
+    let deleted = 0;
+    invoices.forEach(inv => {
+      if (inv.isDeleted) deleted++;
+      else active++;
+    });
+    return { active, deleted, total: invoices.length };
+  }, [invoices]);
+
+  // Unique staff/user options for filtering
+  const userOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    (businessMembers || []).forEach(m => {
+      const name = m.displayName || m.email.split('@')[0];
+      if (name) map.set(name.toLowerCase(), name);
+    });
+    invoices.forEach(inv => {
+      if (inv.billedBy) map.set(inv.billedBy.toLowerCase(), inv.billedBy);
+      if (inv.createdByName) map.set(inv.createdByName.toLowerCase(), inv.createdByName);
+      if (inv.updatedByName) map.set(inv.updatedByName.toLowerCase(), inv.updatedByName);
+    });
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }, [invoices, businessMembers]);
+
   const filteredInvoices = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const cleanTerm = term.replace(/[^0-9]/g, '');
 
     return invoices.filter(invoice => {
-      let matchesSearch = true;
+      // 1. Status Filter (Active vs Trash vs All)
+      if (statusFilter === 'active' && invoice.isDeleted) return false;
+      if (statusFilter === 'deleted' && !invoice.isDeleted) return false;
 
+      // 2. User / Staff Filter
+      if (userFilter !== 'all') {
+        const uLower = userFilter.toLowerCase();
+        const matchesUser =
+          (invoice.billedBy && invoice.billedBy.toLowerCase() === uLower) ||
+          (invoice.createdByName && invoice.createdByName.toLowerCase() === uLower) ||
+          (invoice.updatedByName && invoice.updatedByName.toLowerCase() === uLower) ||
+          (invoice.createdByEmail && invoice.createdByEmail.toLowerCase() === uLower);
+        if (!matchesUser) return false;
+      }
+
+      // 3. Search Term Match
+      let matchesSearch = true;
       if (term) {
         // 1. Bill No match
         const matchId = invoice.id.toLowerCase().includes(term);
@@ -148,6 +222,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
         matchesSearch = matchId || matchName || matchCity || matchPhone;
       }
 
+      // 4. Date Range Match
       let matchesDate = true;
       if (startDate || endDate) {
         // Parse invoice date (DD/MM/YYYY)
@@ -175,10 +250,10 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
       // Sort by Bill No descending (assuming string number)
       return parseInt(b.id) - parseInt(a.id);
     });
-  }, [invoices, searchTerm, getInvoicePhone, startDate, endDate]);
+  }, [invoices, statusFilter, userFilter, searchTerm, getInvoicePhone, startDate, endDate]);
 
   // Reset page when filters change
-  useEffect(() => { resetPage(); }, [searchTerm, startDate, endDate, resetPage]);
+  useEffect(() => { resetPage(); }, [searchTerm, startDate, endDate, statusFilter, userFilter, resetPage]);
 
   // Pagination calculations
   const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
@@ -385,6 +460,90 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
           )}
         </div>
 
+        {/* Status Tabs & Staff Filter */}
+        <div className="px-3 sm:px-4 py-2 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-2 shrink-0">
+          {/* Status Tabs */}
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+            <button
+              onClick={() => setStatusFilter('active')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                statusFilter === 'active'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Active Bills</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                statusFilter === 'active' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {counts.active}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('deleted')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                statusFilter === 'deleted'
+                  ? 'bg-red-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-red-700'
+              }`}
+            >
+              <Trash2 size={13} />
+              <span>Trash / Deleted</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                statusFilter === 'deleted' ? 'bg-white text-red-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {counts.deleted}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                statusFilter === 'all'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>All</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                statusFilter === 'all' ? 'bg-slate-200 text-slate-700' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {counts.total}
+              </span>
+            </button>
+          </div>
+
+          {/* Staff / User Filter Dropdown */}
+          {userOptions.length > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-600">
+              <User size={13} className="text-slate-400 shrink-0" />
+              <select
+                value={userFilter}
+                onChange={(e) => setUserFilter(e.target.value)}
+                className="border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+              >
+                <option value="all">All Staff / Users</option>
+                {userOptions.map(u => (
+                  <option key={u} value={u}>User: {u}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Empty Trash Button for Main Admin */}
+          {statusFilter === 'deleted' && isMainAdmin && counts.deleted > 0 && onEmptyTrash && (
+            <button
+              onClick={onEmptyTrash}
+              className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 shrink-0 ml-auto"
+              title="Permanently wipe all trashed invoices from the database (Main Admin Only)"
+            >
+              <Trash2 size={13} />
+              <span>Empty Trash ({counts.deleted})</span>
+            </button>
+          )}
+        </div>
+
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto">
           {/* MOBILE VIEW: Cards */}
@@ -400,8 +559,13 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="inline-block bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded">#{inv.id}</span>
+                        {inv.isDeleted && (
+                          <span className="inline-block bg-red-100 text-red-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider border border-red-200">
+                            TRASHED
+                          </span>
+                        )}
                         <span className="text-xs text-slate-400">{inv.date}</span>
                       </div>
                       <h3 className="font-bold text-slate-900">{inv.customerName}</h3>
@@ -418,11 +582,17 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                           <span>{getInvoicePhone(inv)}</span>
                         </p>
                       )}
+                      {(inv.billedBy || inv.createdByName) && (
+                        <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-1">
+                          <User size={11} className="text-slate-400" />
+                          <span>Billed by: <strong className="text-slate-700">{inv.billedBy || inv.createdByName}</strong></span>
+                        </p>
+                      )}
                     </div>
                     <div className="text-right">
                       <div className="text-xl font-bold text-indigo-600">₹{formatBillNum(inv.total)}</div>
                       <div className="text-xs text-slate-500">{inv.items.length} items</div>
-                      {enablePaymentTracking && (
+                      {enablePaymentTracking && !inv.isDeleted && (
                         <div className="mt-1">
                           <PaymentStatusBadge status={getPaymentStatus(inv)} small />
                         </div>
@@ -431,14 +601,16 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                   </div>
                   <div className="pt-3 border-t border-slate-100">
                     <p className="text-xs text-slate-500 truncate mb-2">{preview || 'No items'}{moreCount}</p>
-                    <div className={`grid ${enablePaymentTracking && onManagePayments ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-2`}>
+                    
+                    {/* Action Row 1: View & Payments */}
+                    <div className={`grid ${enablePaymentTracking && onManagePayments && !inv.isDeleted ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-2`}>
                       <button 
                         onClick={(e) => { e.stopPropagation(); setViewingInvoice(inv); }}
                         className="bg-indigo-50 text-indigo-600 py-2 px-2 rounded-lg hover:bg-indigo-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
                       >
                         <Eye size={14} /> View
                       </button>
-                      {enablePaymentTracking && onManagePayments && (
+                      {enablePaymentTracking && onManagePayments && !inv.isDeleted && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onManagePayments(inv); }}
                           className="bg-purple-50 text-purple-600 py-2 px-2 rounded-lg hover:bg-purple-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
@@ -447,22 +619,58 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                         </button>
                       )}
                     </div>
+
+                    {/* Action Row 2: Audit Trail + Edit/Delete/Restore */}
                     <div className="grid grid-cols-2 gap-2">
-                      {onEditInvoice && (
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); onEditInvoice(inv); }}
-                          className="bg-blue-50 text-blue-600 py-2 px-2 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
-                        >
-                          <Edit size={14} /> Edit
-                        </button>
-                      )}
-                      {onDeleteInvoice && (
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); onDeleteInvoice(inv.id); }}
-                          className="bg-red-50 text-red-600 py-2 px-2 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
-                        >
-                          <Trash2 size={14} /> Delete
-                        </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setAuditTrailInvoice(inv); }}
+                        className="bg-slate-100 text-slate-700 py-2 px-2 rounded-lg hover:bg-slate-200 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                        title="View Audit Trail"
+                      >
+                        <History size={14} /> Audit Trail
+                      </button>
+
+                      {inv.isDeleted ? (
+                        <div className="flex gap-1.5">
+                          {onRestoreInvoice && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); onRestoreInvoice(inv.id); }}
+                              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-2 rounded-lg flex items-center justify-center gap-1 font-bold text-xs transition-colors shadow-2xs"
+                              title="Restore invoice from Trash"
+                            >
+                              <RotateCcw size={14} /> Restore
+                            </button>
+                          )}
+                          {isMainAdmin && onPermanentDeleteInvoice && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); onPermanentDeleteInvoice(inv.id); }}
+                              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 px-2 rounded-lg flex items-center justify-center gap-1 font-bold text-xs transition-colors shadow-2xs"
+                              title="Permanently delete this invoice from the database (Main Admin Only)"
+                            >
+                              <Trash2 size={14} /> Delete Permanently
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex gap-1.5">
+                          {onEditInvoice && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); onEditInvoice(inv); }}
+                              className="flex-1 bg-blue-50 text-blue-600 py-2 px-1 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                            >
+                              <Edit size={14} /> Edit
+                            </button>
+                          )}
+                          {onDeleteInvoice && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); onDeleteInvoice(inv.id); }}
+                              className="flex-1 bg-red-50 text-red-600 py-2 px-1 rounded-lg hover:bg-red-100 flex items-center justify-center gap-1 font-medium text-xs transition-colors"
+                              title="Move to Trash"
+                            >
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -486,6 +694,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                   <th className="p-4 whitespace-nowrap">Bill No</th>
                   <th className="p-4 whitespace-nowrap">Date</th>
                   <th className="p-4 whitespace-nowrap">Customer</th>
+                  <th className="p-4 whitespace-nowrap">Billed By</th>
                   <th className="p-4 whitespace-nowrap text-right">Items</th>
                   <th className="p-4 whitespace-nowrap text-right">Total Amount</th>
                   {enablePaymentTracking && <th className="p-4 whitespace-nowrap text-center">Status</th>}
@@ -495,8 +704,17 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
               <tbody className="divide-y divide-slate-100 text-sm">
                 {pagedInvoices.map(inv => (
                   <React.Fragment key={inv.id}>
-                    <tr className="hover:bg-slate-50 transition-colors">
-                      <td className="p-4 font-bold text-slate-700">#{inv.id}</td>
+                    <tr className={`hover:bg-slate-50 transition-colors ${inv.isDeleted ? 'bg-red-50/40 opacity-90' : ''}`}>
+                      <td className="p-4 font-bold text-slate-700">
+                        <div className="flex items-center gap-1.5">
+                          <span>#{inv.id}</span>
+                          {inv.isDeleted && (
+                            <span className="bg-red-100 text-red-700 text-[10px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider border border-red-200">
+                              TRASHED
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="p-4 text-slate-500">{inv.date}</td>
                       <td className="p-4 font-medium">
                         <div className="font-bold text-slate-800">
@@ -509,6 +727,19 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                           <div className="text-xs text-slate-500 font-normal flex items-center gap-1 mt-0.5">
                             <span>📞</span>
                             <span>{getInvoicePhone(inv)}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-4 text-slate-600 text-xs">
+                        <div className="font-medium text-slate-700 flex items-center gap-1">
+                          <User size={12} className="text-slate-400 shrink-0" />
+                          <span className="truncate max-w-[120px]" title={inv.billedBy || inv.createdByName || 'System'}>
+                            {inv.billedBy || inv.createdByName || 'System'}
+                          </span>
+                        </div>
+                        {inv.updatedByName && (
+                          <div className="text-[10px] text-slate-400 truncate max-w-[120px]" title={`Edited by ${inv.updatedByName}`}>
+                            Edited: {inv.updatedByName}
                           </div>
                         )}
                       </td>
@@ -525,45 +756,87 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                       <td className="p-4 text-right font-bold text-slate-900">₹{formatBillNum(inv.total)}</td>
                       {enablePaymentTracking && (
                         <td className="p-4 text-center">
-                          <PaymentStatusBadge status={getPaymentStatus(inv)} />
+                          {inv.isDeleted ? (
+                            <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full border border-red-200">
+                              Cancelled
+                            </span>
+                          ) : (
+                            <PaymentStatusBadge status={getPaymentStatus(inv)} />
+                          )}
                         </td>
                       )}
                       <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                        <div className="flex items-center justify-center gap-1.5">
                           <button
                             onClick={() => setViewingInvoice(inv)}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-full transition-colors"
                             title="View Invoice"
                           >
-                            <Eye size={16} />
+                            <Eye size={15} />
                           </button>
-                          {enablePaymentTracking && onManagePayments && (
+                          
+                          {enablePaymentTracking && onManagePayments && !inv.isDeleted && (
                             <button
                               onClick={() => onManagePayments(inv)}
                               className="bg-purple-100 hover:bg-purple-200 text-purple-700 p-2 rounded-full transition-colors"
                               title="Manage Payments"
                             >
-                              <Wallet size={16} />
+                              <Wallet size={15} />
                             </button>
                           )}
-                          {onEditInvoice && (
-                            <button
-                              onClick={() => onEditInvoice(inv)}
-                              className="bg-blue-100 hover:bg-blue-200 text-blue-700 p-2 rounded-full transition-colors"
-                              title="Edit Invoice"
-                            >
-                              <Edit size={16} />
-                            </button>
+
+                          <button
+                            onClick={() => setAuditTrailInvoice(inv)}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-2 rounded-full transition-colors"
+                            title="Audit Trail & Revision History"
+                          >
+                            <History size={15} />
+                          </button>
+
+                          {inv.isDeleted ? (
+                            <div className="flex items-center gap-1.5">
+                              {onRestoreInvoice && (
+                                <button
+                                  onClick={() => onRestoreInvoice(inv.id)}
+                                  className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 p-2 rounded-full transition-colors"
+                                  title="Restore Bill from Trash"
+                                >
+                                  <RotateCcw size={15} />
+                                </button>
+                              )}
+                              {isMainAdmin && onPermanentDeleteInvoice && (
+                                <button
+                                  onClick={() => onPermanentDeleteInvoice(inv.id)}
+                                  className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-full transition-colors shadow-xs"
+                                  title="Permanently Delete Bill from Database (Main Admin Only)"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <>
+                              {onEditInvoice && (
+                                <button
+                                  onClick={() => onEditInvoice(inv)}
+                                  className="bg-blue-100 hover:bg-blue-200 text-blue-700 p-2 rounded-full transition-colors"
+                                  title="Edit Invoice"
+                                >
+                                  <Edit size={15} />
+                                </button>
+                              )}
+                              {onDeleteInvoice && (
+                                <button
+                                  onClick={() => onDeleteInvoice(inv.id)}
+                                  className="bg-red-100 hover:bg-red-200 text-red-700 p-2 rounded-full transition-colors"
+                                  title="Move to Trash"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
+                            </>
                           )}
-                          {onDeleteInvoice && (
-                            <button
-                              onClick={() => onDeleteInvoice(inv.id)}
-                              className="bg-red-100 hover:bg-red-200 text-red-700 p-2 rounded-full transition-colors"
-                              title="Delete Invoice"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
+
                           <button
                             onClick={(e) => { e.stopPropagation(); setExpandedId(prev => prev === inv.id ? null : inv.id); }}
                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded transition-colors text-xs"
@@ -577,7 +850,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
 
                     {expandedId === inv.id && (
                       <tr id={`inv-expanded-${inv.id}`} className="bg-slate-50">
-                        <td colSpan={enablePaymentTracking ? 7 : 6} className="p-4">
+                        <td colSpan={enablePaymentTracking ? 8 : 7} className="p-4">
                           <div className="grid gap-2">
                             {inv.items.map(it => (
                               <div key={it.id} className="flex justify-between text-sm text-slate-700">
@@ -675,13 +948,63 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
         {viewingInvoice && (
           <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-0 md:p-4 backdrop-blur-sm">
             <div className="bg-slate-200 w-full md:max-w-5xl h-full md:h-[90vh] md:rounded-lg shadow-2xl flex flex-col relative overflow-hidden">
+              {/* Trashed Alert Banner if viewed invoice is soft-deleted */}
+              {viewingInvoice.isDeleted && (
+                <div className="bg-rose-600 text-white px-4 py-2 text-xs flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={15} />
+                    <span>This invoice is currently in Trash (Cancelled / Deleted).</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {onRestoreInvoice && (
+                      <button
+                        onClick={() => {
+                          onRestoreInvoice(viewingInvoice.id);
+                          setViewingInvoice(prev => prev ? { ...prev, isDeleted: false } : null);
+                        }}
+                        className="bg-white text-rose-700 font-bold px-3 py-1 rounded text-xs hover:bg-rose-50 transition-colors shadow-2xs flex items-center gap-1"
+                      >
+                        <RotateCcw size={12} /> Restore Invoice
+                      </button>
+                    )}
+                    {isMainAdmin && onPermanentDeleteInvoice && (
+                      <button
+                        onClick={() => {
+                          onPermanentDeleteInvoice(viewingInvoice.id);
+                          setViewingInvoice(null);
+                        }}
+                        className="bg-red-950 text-white font-bold px-3 py-1 rounded text-xs hover:bg-black transition-colors shadow-2xs flex items-center gap-1"
+                        title="Permanently delete this invoice from the database (Main Admin Only)"
+                      >
+                        <Trash2 size={12} /> Delete Permanently
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Toolbar */}
               <div className="bg-slate-800 text-white p-3 md:p-4 flex flex-wrap justify-between items-center no-print gap-2 shrink-0 safe-top">
                 <div className="flex flex-col">
                   <span className="text-[10px] md:text-xs text-slate-400 uppercase tracking-wider">Viewing Invoice</span>
-                  <h3 className="font-bold text-sm md:text-lg">#{viewingInvoice.id}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm md:text-lg">#{viewingInvoice.id}</h3>
+                    {viewingInvoice.isDeleted && (
+                      <span className="bg-rose-500/30 text-rose-300 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider border border-rose-400/40">
+                        TRASHED
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-2 md:gap-3">
+                  <button
+                    onClick={() => setAuditTrailInvoice(viewingInvoice)}
+                    className="flex items-center gap-1 md:gap-2 bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-indigo-600"
+                    title="View Revision History & Changes"
+                  >
+                    <History size={14} className="md:w-4 md:h-4" />
+                    <span>Audit Trail</span>
+                  </button>
                   <button
                     onClick={handlePrint}
                     className="flex items-center gap-1 md:gap-2 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-slate-600"
@@ -717,11 +1040,33 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                     payments={viewingInvoice.payments}
                     showUnitInItemsTable={viewingInvoice.showUnitInItemsTable}
                     customTotalQtyText={viewingInvoice.customTotalQtyText}
+                    billedBy={viewingInvoice.billedBy || viewingInvoice.createdByName}
+                    createdByName={viewingInvoice.createdByName}
+                    isDeleted={viewingInvoice.isDeleted}
                   />
                 </div>
               </div>
             </div>
           </div>
+        )}
+
+        {/* Audit Trail Modal */}
+        {auditTrailInvoice && (
+          <InvoiceAuditTrailModal
+            invoice={auditTrailInvoice}
+            onClose={() => setAuditTrailInvoice(null)}
+            isMainAdmin={isMainAdmin}
+            onRestore={(id) => {
+              if (onRestoreInvoice) onRestoreInvoice(id);
+              setAuditTrailInvoice(prev => prev ? { ...prev, isDeleted: false } : null);
+              setViewingInvoice(prev => prev && prev.id === id ? { ...prev, isDeleted: false } : prev);
+            }}
+            onPermanentDelete={(id) => {
+              if (onPermanentDeleteInvoice) onPermanentDeleteInvoice(id);
+              setAuditTrailInvoice(null);
+              setViewingInvoice(null);
+            }}
+          />
         )}
 
         {/* Invoice Import Modal */}

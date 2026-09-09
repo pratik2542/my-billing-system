@@ -9,6 +9,8 @@ interface InvoiceGeneratorProps {
   invoices?: Invoice[];
   settings: BusinessSettings;
   enablePaymentTracking?: boolean;
+  currentUserDisplayName?: string;
+  businessMembers?: Array<{ uid: string; displayName?: string; email: string; role?: string }>;
   onUpdateSettings: (newSettings: BusinessSettings) => void;
   onSaveInvoice: (invoice: Invoice) => Promise<void>;
   onUnsavedChanges?: (hasChanges: boolean) => void;
@@ -22,6 +24,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   invoices = [],
   settings,
   enablePaymentTracking = (settings.enablePaymentTracking !== false),
+  currentUserDisplayName,
+  businessMembers = [],
   onUpdateSettings,
   onSaveInvoice,
   onUnsavedChanges,
@@ -31,6 +35,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   // Initialize billNo from settings
   const [billNo, setBillNo] = useState<string>(settings.nextInvoiceNumber.toString());
   const [date, setDate] = useState<string>(new Date().toLocaleDateString('en-GB'));
+  const [billedBy, setBilledBy] = useState<string>(currentUserDisplayName || '');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerName, setCustomerName] = useState('');
   const [customerCity, setCustomerCity] = useState('');
@@ -208,8 +213,13 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         setPaymentMode('Cash');
         setPaymentNote('');
       }
+      setBilledBy(editingInvoice.billedBy || editingInvoice.createdByName || currentUserDisplayName || '');
+    } else {
+      if (currentUserDisplayName) {
+        setBilledBy(currentUserDisplayName);
+      }
     }
-  }, [editingInvoice, customers]);
+  }, [editingInvoice, customers, currentUserDisplayName]);
 
   // Sync billNo from settings when not editing or just saved
   useEffect(() => {
@@ -474,6 +484,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     setPaymentAmount('');
     setPaymentMode('Cash');
     setPaymentNote('');
+    setBilledBy(currentUserDisplayName || '');
   };
 
   const handleCustomerSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -519,6 +530,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     }
 
     const invoice: Invoice = {
+      ...(editingInvoice || {}),
       id: billNo,
       date,
       customerName,
@@ -534,7 +546,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       cgstAmount: cgstAmount,
       payments: initialPayments,
       showUnitInItemsTable: showUnitInInvoice,
-      customTotalQtyText: isCustomTotalQtyEdited ? customTotalQtyText : undefined
+      customTotalQtyText: isCustomTotalQtyEdited ? customTotalQtyText : undefined,
+      billedBy: billedBy.trim() || currentUserDisplayName || undefined,
     };
 
     try {
@@ -692,8 +705,33 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           </button>
         </div>
 
+        {/* Editing Alert Banner */}
+        {editingInvoice && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs text-amber-900 shadow-2xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Edit className="w-4 h-4 text-amber-600 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-bold">Editing Bill #{editingInvoice.id}</p>
+                <p className="text-[11px] text-amber-700 truncate">
+                  Original Creator: <strong className="font-semibold">{editingInvoice.createdByName || editingInvoice.billedBy || 'Unknown User'}</strong> ({editingInvoice.date})
+                  {editingInvoice.updatedByName && ` • Last edited by ${editingInvoice.updatedByName}`}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (onClearEditingInvoice) onClearEditingInvoice();
+                resetForm();
+              }}
+              className="bg-amber-200 hover:bg-amber-300 text-amber-900 font-bold px-2.5 py-1 rounded-lg text-[11px] transition-colors shrink-0"
+            >
+              Cancel Edit
+            </button>
+          </div>
+        )}
+
         {/* Header Details */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
               {editingInvoice ? 'Bill No (Locked)' : 'Bill No (Auto)'}
@@ -702,7 +740,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
               type="text"
               value={billNo}
               readOnly
-              className="w-full p-2 border border-slate-200 bg-slate-100 text-slate-500 rounded outline-none text-sm cursor-not-allowed"
+              className="w-full p-2 border border-slate-200 bg-slate-100 text-slate-500 rounded outline-none text-sm cursor-not-allowed font-semibold"
               title={editingInvoice ? 'Cannot change bill number when editing' : 'Auto-generated bill number'}
             />
           </div>
@@ -713,9 +751,41 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
               value={date}
               onChange={(e) => setDate(e.target.value)}
               disabled={isSaved}
-              className="w-full p-2 border border-slate-300 rounded focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm disabled:bg-slate-50 disabled:text-slate-500"
+              className="w-full p-2 border border-slate-300 rounded focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm disabled:bg-slate-50 disabled:text-slate-500 font-medium"
               placeholder="DD/MM/YYYY"
             />
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Billed By / Staff</label>
+            {businessMembers && businessMembers.length > 1 ? (
+              <div className="relative">
+                <input
+                  type="text"
+                  list="business-staff-list"
+                  value={billedBy}
+                  onChange={(e) => setBilledBy(e.target.value)}
+                  disabled={isSaved}
+                  placeholder={currentUserDisplayName || 'Staff Member'}
+                  className="w-full p-2 border border-slate-300 rounded focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm disabled:bg-slate-50 disabled:text-slate-500 font-medium"
+                />
+                <datalist id="business-staff-list">
+                  {businessMembers.map(m => (
+                    <option key={m.uid} value={m.displayName || m.email.split('@')[0]}>
+                      {m.displayName || m.email} ({m.role || 'staff'})
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={billedBy}
+                onChange={(e) => setBilledBy(e.target.value)}
+                disabled={isSaved}
+                placeholder={currentUserDisplayName || 'Staff Member'}
+                className="w-full p-2 border border-slate-300 rounded focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm disabled:bg-slate-50 disabled:text-slate-500 font-medium"
+              />
+            )}
           </div>
         </div>
 
@@ -1580,6 +1650,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             payments={currentPayments}
             showUnitInItemsTable={showUnitInInvoice}
             customTotalQtyText={isCustomTotalQtyEdited ? customTotalQtyText : undefined}
+            billedBy={billedBy || currentUserDisplayName}
+            createdByName={editingInvoice?.createdByName || currentUserDisplayName}
+            isDeleted={editingInvoice?.isDeleted}
           />
         </div>
       </div>
@@ -1599,6 +1672,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             payments={currentPayments}
             showUnitInItemsTable={showUnitInInvoice}
             customTotalQtyText={isCustomTotalQtyEdited ? customTotalQtyText : undefined}
+            billedBy={billedBy || currentUserDisplayName}
+            createdByName={editingInvoice?.createdByName || currentUserDisplayName}
+            isDeleted={editingInvoice?.isDeleted}
           />
         </div>
       </div>

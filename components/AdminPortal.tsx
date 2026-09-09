@@ -3,8 +3,9 @@ import { db, firebaseConfig } from "../firebase";
 import { collection, collectionGroup, doc, getDocs, setDoc, updateDoc, onSnapshot, query, orderBy, limit, deleteDoc } from "firebase/firestore";
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut as fbSignOut } from "firebase/auth";
-import { InvoiceTemplate } from "./InvoiceTemplate";
-import { UserProfile, UserSession, AppErrorLog, UserActivityLog, ActivityCategory, BusinessSettings, ColumnId, InvoiceHeaderCustomization } from "../types";
+import { InvoiceTemplate, formatBillNum } from "./InvoiceTemplate";
+import { InvoiceAuditTrailModal } from "./InvoiceAuditTrailModal";
+import { Invoice, UserProfile, UserSession, AppErrorLog, UserActivityLog, ActivityCategory, BusinessSettings, ColumnId, InvoiceHeaderCustomization } from "../types";
 import { DEFAULT_BUSINESS_SETTINGS, DEFAULT_COLUMN_HEADERS, DEFAULT_UNMERGED_COLUMN_ORDER, DEFAULT_MERGED_COLUMN_ORDER, getEffectiveColumnOrder, DEFAULT_COLUMN_WIDTHS, COLUMN_WIDTH_OPTIONS } from "../constants";
 import {
   Users, ShieldCheck, Activity, AlertTriangle, UserPlus, Lock, Unlock, RefreshCw, Loader2, X,
@@ -857,6 +858,7 @@ export const AdminPortal: React.FC = () => {
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [inspectingBusiness, setInspectingBusiness] = useState<{ businessId: string; businessName: string } | null>(null);
+  const [managingInvoicesBusiness, setManagingInvoicesBusiness] = useState<{ businessId: string; businessName: string } | null>(null);
 
   // 1. Live User Profiles Listener
   useEffect(() => {
@@ -1114,7 +1116,7 @@ export const AdminPortal: React.FC = () => {
               onEditUser={setEditingUser}
             />
           )
-          : activeTab === "businesses" ? <BusinessesTabContent profiles={enrichedProfiles} onAddMember={openAddUserForBusiness} onInspectBill={setInspectingBusiness}/>
+          : activeTab === "businesses" ? <BusinessesTabContent profiles={enrichedProfiles} onAddMember={openAddUserForBusiness} onInspectBill={setInspectingBusiness} onManageInvoices={setManagingInvoicesBusiness}/>
           : activeTab === "errors" ? <ErrorLogsTabContent errors={allErrors} onRefresh={loadAllErrors}/>
           : <UsageTabContent profiles={enrichedProfiles} allInvoices={allInvoices} allActivityLogs={allActivityLogs} allErrors={allErrors}/>}
         </div>
@@ -1123,6 +1125,7 @@ export const AdminPortal: React.FC = () => {
       {selectedUser && <UserDetailDrawer profile={selectedUser} activityLogs={allActivityLogs} onClose={() => setSelectedUser(null)}/>}
       {editingUser && <EditUserModal profile={editingUser} onClose={() => setEditingUser(null)} onUpdated={() => setEditingUser(null)} />}
       {inspectingBusiness && <BusinessBillLayoutModal businessId={inspectingBusiness.businessId} businessName={inspectingBusiness.businessName} onClose={() => setInspectingBusiness(null)} />}
+      {managingInvoicesBusiness && <BusinessInvoicesManagementModal businessId={managingInvoicesBusiness.businessId} businessName={managingInvoicesBusiness.businessName} onClose={() => setManagingInvoicesBusiness(null)} />}
     </div>
   );
 };
@@ -1290,7 +1293,8 @@ const BusinessesTabContent: React.FC<{
   profiles: UserProfile[];
   onAddMember: (bId: string) => void;
   onInspectBill: (b: { businessId: string; businessName: string }) => void;
-}> = ({ profiles, onAddMember, onInspectBill }) => {
+  onManageInvoices: (b: { businessId: string; businessName: string }) => void;
+}> = ({ profiles, onAddMember, onInspectBill, onManageInvoices }) => {
   const businessMap: Record<string, { businessId: string; businessName: string; members: UserProfile[]; totalInvoices: number }> = {};
 
   profiles.forEach(p => {
@@ -1330,14 +1334,21 @@ const BusinessesTabContent: React.FC<{
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {businessList.map((b) => (
             <div key={b.businessId} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-3">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start justify-between gap-2 flex-wrap">
                 <div>
                   <h4 className="font-bold text-slate-900 text-base flex items-center gap-2">
                     <Building size={18} className="text-indigo-600 shrink-0" /> {b.businessName}
                   </h4>
                   <p className="text-xs text-slate-400 mt-0.5">Workspace ID: {b.businessId}</p>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                  <button
+                    onClick={() => onManageInvoices({ businessId: b.businessId, businessName: b.businessName })}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shrink-0 shadow-xs"
+                    title="Manage Invoices, Audit Trail & Trash"
+                  >
+                    <FileText size={14} /> Invoices & Trash
+                  </button>
                   <button
                     onClick={() => onInspectBill({ businessId: b.businessId, businessName: b.businessName })}
                     className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shrink-0"
@@ -1738,6 +1749,441 @@ const BusinessBillLayoutModal: React.FC<BusinessBillLayoutModalProps> = ({ busin
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+// ---- Business Invoices & Trash Management Modal (Main Admin) ----
+interface BusinessInvoicesManagementModalProps {
+  businessId: string;
+  businessName: string;
+  onClose: () => void;
+}
+
+const BusinessInvoicesManagementModal: React.FC<BusinessInvoicesManagementModalProps> = ({ businessId, businessName, onClose }) => {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'deleted'>('all');
+  const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
+  const [auditTrailInvoice, setAuditTrailInvoice] = useState<Invoice | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<BusinessSettings>(DEFAULT_BUSINESS_SETTINGS);
+
+  useEffect(() => {
+    const unsubSettings = onSnapshot(doc(db, "users", businessId, "settings", "general"), (snap) => {
+      if (snap.exists()) {
+        setSettings({ ...DEFAULT_BUSINESS_SETTINGS, ...snap.data() } as BusinessSettings);
+      } else {
+        setSettings({ ...DEFAULT_BUSINESS_SETTINGS, name: businessName || DEFAULT_BUSINESS_SETTINGS.name });
+      }
+    });
+
+    const colRef = businessId === 'global' ? collection(db, 'invoices') : collection(db, 'users', businessId, 'invoices');
+    const unsubInvoices = onSnapshot(colRef, (snap) => {
+      const list = snap.docs.map(d => ({ ...d.data(), id: d.id } as Invoice));
+      setInvoices(list);
+      setLoading(false);
+    }, (err) => {
+      console.warn("Error loading workspace invoices:", err);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubSettings();
+      unsubInvoices();
+    };
+  }, [businessId, businessName]);
+
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      if (statusFilter === 'active' && inv.isDeleted) return false;
+      if (statusFilter === 'deleted' && !inv.isDeleted) return false;
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const idMatch = (inv.id || '').toLowerCase().includes(q);
+        const nameMatch = (inv.customerName || '').toLowerCase().includes(q);
+        const cityMatch = (inv.customerCity || '').toLowerCase().includes(q);
+        const dateMatch = (inv.date || '').toLowerCase().includes(q);
+        return idMatch || nameMatch || cityMatch || dateMatch;
+      }
+      return true;
+    }).sort((a, b) => {
+      const numA = parseInt((a.id || '').toString().replace(/[^0-9]/g, ''), 10) || 0;
+      const numB = parseInt((b.id || '').toString().replace(/[^0-9]/g, ''), 10) || 0;
+      return numB - numA;
+    });
+  }, [invoices, statusFilter, searchTerm]);
+
+  const counts = useMemo(() => {
+    const total = invoices.length;
+    const deleted = invoices.filter(i => i.isDeleted).length;
+    const active = total - deleted;
+    const totalRevenue = invoices.filter(i => !i.isDeleted).reduce((s, i) => s + (i.total || 0), 0);
+    return { total, deleted, active, totalRevenue };
+  }, [invoices]);
+
+  const handlePermanentDelete = async (invoiceId: string) => {
+    if (!window.confirm(`⚠️ PERMANENTLY DELETE Bill #${invoiceId} from "${businessName}"?\n\nWARNING: This will completely remove this bill, its items, and its entire revision history from the database.\n\nThis action CANNOT be undone. You will be able to reuse Bill #${invoiceId} if desired.\n\nAre you sure you want to proceed?`)) {
+      return;
+    }
+    setActionLoadingId(invoiceId);
+    try {
+      const docRef = businessId === 'global' ? doc(db, 'invoices', invoiceId) : doc(db, 'users', businessId, 'invoices', invoiceId);
+      await deleteDoc(docRef);
+      alert(`Bill #${invoiceId} has been permanently deleted from database.`);
+      if (viewingInvoice?.id === invoiceId) setViewingInvoice(null);
+      if (auditTrailInvoice?.id === invoiceId) setAuditTrailInvoice(null);
+    } catch (err: any) {
+      alert("Failed to delete invoice: " + (err?.message || "Unknown error"));
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    const trashed = invoices.filter(i => i.isDeleted);
+    if (trashed.length === 0) {
+      alert("Trash is already empty for this business.");
+      return;
+    }
+    if (!window.confirm(`⚠️ PERMANENTLY DELETE ALL ${trashed.length} TRASHED BILLS for "${businessName}"?\n\nWARNING: This will permanently wipe all ${trashed.length} deleted bills from the database.\n\nThis action CANNOT be undone. Proceed?`)) {
+      return;
+    }
+    setActionLoadingId('empty-trash');
+    try {
+      for (const inv of trashed) {
+        const docRef = businessId === 'global' ? doc(db, 'invoices', inv.id) : doc(db, 'users', businessId, 'invoices', inv.id);
+        await deleteDoc(docRef);
+      }
+      alert(`Successfully permanently deleted ${trashed.length} trashed invoices.`);
+    } catch (err: any) {
+      alert("Failed to empty trash: " + (err?.message || "Unknown error"));
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleRestore = async (invoiceId: string) => {
+    setActionLoadingId(invoiceId);
+    try {
+      const docRef = businessId === 'global' ? doc(db, 'invoices', invoiceId) : doc(db, 'users', businessId, 'invoices', invoiceId);
+      const current = invoices.find(i => i.id === invoiceId);
+      const restEntry = {
+        id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        action: 'restored' as const,
+        timestamp: Date.now(),
+        userId: 'main_admin',
+        userName: 'Main Administrator',
+        summary: `Bill #${invoiceId} restored from Trash by Main Administrator`
+      };
+      await updateDoc(docRef, {
+        isDeleted: false,
+        restoredAt: Date.now(),
+        restoredByName: 'Main Administrator',
+        auditTrail: [...(current?.auditTrail || []), restEntry]
+      });
+      alert(`Bill #${invoiceId} restored successfully.`);
+    } catch (err: any) {
+      alert("Failed to restore invoice: " + (err?.message || "Unknown error"));
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-fadeIn">
+        {/* Header */}
+        <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs">
+              <Building size={22} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-bold">Invoices & Trash Management</h3>
+                <span className="bg-indigo-500/30 text-indigo-300 text-xs px-2.5 py-0.5 rounded-full font-bold border border-indigo-400/30">
+                  {businessName}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">Workspace ID: {businessId} • Admin Full Access</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Stats Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-50 border-b border-slate-200 shrink-0 text-center">
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Total Bills</span>
+            <p className="text-lg font-bold text-slate-800 mt-0.5">{counts.total}</p>
+          </div>
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-[10px] font-bold text-indigo-500 uppercase">Active Bills</span>
+            <p className="text-lg font-bold text-indigo-600 mt-0.5">{counts.active}</p>
+          </div>
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-[10px] font-bold text-red-500 uppercase">In Trash</span>
+            <p className="text-lg font-bold text-red-600 mt-0.5">{counts.deleted}</p>
+          </div>
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+            <span className="text-[10px] font-bold text-emerald-600 uppercase">Active Revenue</span>
+            <p className="text-lg font-bold text-emerald-700 mt-0.5">₹{formatBillNum(counts.totalRevenue)}</p>
+          </div>
+        </div>
+
+        {/* Filter Controls Bar */}
+        <div className="p-3 sm:px-5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${statusFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              All Bills ({counts.total})
+            </button>
+            <button
+              onClick={() => setStatusFilter('active')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${statusFilter === 'active' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              Active ({counts.active})
+            </button>
+            <button
+              onClick={() => setStatusFilter('deleted')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${statusFilter === 'deleted' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-600 hover:text-red-700'}`}
+            >
+              <Trash2 size={13} />
+              <span>Trash ({counts.deleted})</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial min-w-[200px] max-w-xs">
+            <div className="relative w-full">
+              <input
+                type="text"
+                placeholder="Search Bill #, Customer, Date..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+              />
+              <Filter size={13} className="absolute left-2.5 top-2 text-slate-400" />
+            </div>
+          </div>
+
+          {counts.deleted > 0 && statusFilter === 'deleted' && (
+            <button
+              onClick={handleEmptyTrash}
+              disabled={actionLoadingId === 'empty-trash'}
+              className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+              title="Permanently wipe all trashed invoices from this workspace"
+            >
+              <Trash2 size={13} />
+              <span>Empty Workspace Trash</span>
+            </button>
+          )}
+        </div>
+
+        {/* Invoices List Table */}
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
+              <Loader2 className="animate-spin" size={24} />
+              <span>Loading workspace invoices...</span>
+            </div>
+          ) : filteredInvoices.length === 0 ? (
+            <div className="text-center py-16 text-slate-400">
+              <FileText size={48} className="mx-auto mb-2 opacity-20" />
+              <p className="font-semibold">No invoices found</p>
+              <p className="text-xs text-slate-400 mt-1">No invoices match the current filter or search criteria.</p>
+            </div>
+          ) : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                    <th className="p-3">Bill No</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Customer</th>
+                    <th className="p-3">Operator / Author</th>
+                    <th className="p-3 text-right">Items</th>
+                    <th className="p-3 text-right">Total</th>
+                    <th className="p-3 text-center">Status</th>
+                    <th className="p-3 text-center">Admin Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredInvoices.map((inv) => (
+                    <tr key={inv.id} className={`hover:bg-slate-50/80 transition-colors ${inv.isDeleted ? 'bg-red-50/30' : ''}`}>
+                      <td className="p-3 font-bold text-slate-900">
+                        #{inv.id}
+                      </td>
+                      <td className="p-3 text-slate-600 font-medium">
+                        {inv.date}
+                      </td>
+                      <td className="p-3 font-semibold text-slate-800">
+                        <div>{inv.customerName}</div>
+                        {inv.customerCity && <div className="text-[10px] text-slate-400 font-normal">{inv.customerCity}</div>}
+                      </td>
+                      <td className="p-3 text-slate-600">
+                        <div className="font-medium">{inv.billedBy || inv.createdByName || 'System'}</div>
+                        {inv.updatedByName && <div className="text-[9px] text-slate-400">Edit: {inv.updatedByName}</div>}
+                      </td>
+                      <td className="p-3 text-right text-slate-600 font-medium">
+                        {inv.items?.length || 0} items
+                      </td>
+                      <td className="p-3 text-right font-bold text-slate-900">
+                        ₹{formatBillNum(inv.total)}
+                      </td>
+                      <td className="p-3 text-center">
+                        {inv.isDeleted ? (
+                          <span className="bg-red-100 text-red-700 text-[10px] font-black px-2 py-0.5 rounded-full border border-red-200 uppercase">
+                            TRASHED
+                          </span>
+                        ) : (
+                          <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-200 uppercase">
+                            Active
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => setViewingInvoice(inv)}
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                            title="Preview Invoice Layout"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <button
+                            onClick={() => setAuditTrailInvoice(inv)}
+                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors"
+                            title="View Audit Trail & Diffs"
+                          >
+                            <Clock size={14} />
+                          </button>
+                          {inv.isDeleted ? (
+                            <>
+                              <button
+                                onClick={() => handleRestore(inv.id)}
+                                disabled={actionLoadingId === inv.id}
+                                className="p-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg transition-colors"
+                                title="Restore Bill"
+                              >
+                                <RotateCcw size={14} />
+                              </button>
+                              <button
+                                onClick={() => handlePermanentDelete(inv.id)}
+                                disabled={actionLoadingId === inv.id}
+                                className="p-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors shadow-2xs"
+                                title="Permanently Delete from Firestore (Cannot be undone)"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => handlePermanentDelete(inv.id)}
+                              disabled={actionLoadingId === inv.id}
+                              className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-colors"
+                              title="Permanently Delete Bill"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={14} className="text-indigo-600" />
+            <span>Main Administrator Master Authority</span>
+          </div>
+          <button onClick={onClose} className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-1.5 rounded-lg transition-colors text-xs">
+            Close
+          </button>
+        </div>
+      </div>
+
+      {/* Invoice Detail Preview Modal */}
+      {viewingInvoice && (
+        <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-slate-900 text-white p-3.5 px-5 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm">Bill #{viewingInvoice.id}</span>
+                {viewingInvoice.isDeleted && (
+                  <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded uppercase">
+                    TRASHED
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {viewingInvoice.isDeleted && (
+                  <button
+                    onClick={() => {
+                      handlePermanentDelete(viewingInvoice.id);
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1 shadow-xs"
+                  >
+                    <Trash2 size={13} /> Delete Permanently
+                  </button>
+                )}
+                <button onClick={() => setViewingInvoice(null)} className="text-slate-400 hover:text-white p-1 rounded-lg">
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-100 flex justify-center">
+              <div className="bg-white shadow-xl max-w-3xl w-full">
+                <InvoiceTemplate
+                  id="admin-workspace-preview"
+                  billNo={viewingInvoice.id}
+                  date={viewingInvoice.date}
+                  customerName={viewingInvoice.customerName}
+                  customerCity={viewingInvoice.customerCity}
+                  customerMobile={viewingInvoice.customerMobile}
+                  items={viewingInvoice.items || []}
+                  settings={settings}
+                  gstRate={viewingInvoice.gstRate}
+                  payments={viewingInvoice.payments}
+                  showUnitInItemsTable={viewingInvoice.showUnitInItemsTable}
+                  customTotalQtyText={viewingInvoice.customTotalQtyText}
+                  billedBy={viewingInvoice.billedBy || viewingInvoice.createdByName}
+                  createdByName={viewingInvoice.createdByName}
+                  isDeleted={viewingInvoice.isDeleted}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Audit Trail Modal */}
+      {auditTrailInvoice && (
+        <InvoiceAuditTrailModal
+          invoice={auditTrailInvoice}
+          onClose={() => setAuditTrailInvoice(null)}
+          isMainAdmin={true}
+          onRestore={(id) => {
+            handleRestore(id);
+            setAuditTrailInvoice(null);
+          }}
+          onPermanentDelete={(id) => {
+            handlePermanentDelete(id);
+            setAuditTrailInvoice(null);
+          }}
+        />
+      )}
     </div>
   );
 };
