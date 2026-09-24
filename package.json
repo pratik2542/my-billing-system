@@ -1,17 +1,29 @@
 {
-  "name": "meena-billing-system",
+  "name": "universal-billing-system",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Offline billing and invoice management system",
+  "author": "Pratik",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "backup:now": "node scripts/backup_service.js",
-    "backup:daemon": "node scripts/run_cron_daemon.js"
+    "backup:daemon": "node scripts/run_cron_daemon.js",
+    "electron:compile": "tsc --project tsconfig.electron.json && node scripts/obfuscate-electron.cjs",
+    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "vite build --config vite.electron.config.ts && npm run electron:compile && electron-builder",
+    "electron:pack": "vite build --config vite.electron.config.ts && npm run electron:compile && electron-builder --dir",
+    "build:exe": "node build-electron.cjs",
+    "keygen": "node --loader ts-node/esm installer/keygen.ts",
+    "setup:sqlite": "node scripts/install-prebuilt-sqlite.cjs",
+    "rebuild": "node scripts/install-prebuilt-sqlite.cjs"
   },
   "dependencies": {
     "@google/genai": "^2.17.0",
+    "better-sqlite3": "^9.6.0",
     "dotenv": "^17.4.2",
     "firebase": "^12.17.1",
     "firebase-admin": "^14.2.0",
@@ -19,18 +31,28 @@
     "jspdf": "4.2.1",
     "lucide-react": "^1.31.0",
     "node-cron": "^4.6.0",
+    "node-machine-id": "^1.1.12",
     "nodemailer": "^9.0.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/better-sqlite3": "^7.6.8",
     "@types/node": "^26.2.0",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
+    "concurrently": "^9.1.2",
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8",
+    "electron-rebuild": "^3.2.9",
+    "electron-updater": "^6.8.9",
+    "javascript-obfuscator": "^5.7.0",
     "typescript": "~7.0.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "wait-on": "^8.0.3"
   }
 }

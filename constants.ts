@@ -248,5 +248,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
     showCustomerAnalysis: true,
     showCustomerPurchaseDetails: true,
     showAiBusinessAnalyst: true
-  }
+  },
+  showUnitInBillRow: true,
+  showProductPriceInDropdown: true
 };

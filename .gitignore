@@ -7,20 +7,49 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# Dependencies
+node_modules/
+
+# Production & Build Outputs
+dist/
+dist-ssr/
+dist-electron/
+release/
+
+# Compiled Electron artifacts (generated via `npm run electron:compile` from .ts)
+electron/**/*.js
+installer/**/*.js
+
+# Environment & Secrets
 .env
 .env.*
-backups/
+!.env.example
+*.local
 serviceAccountKey.json
+*.pem
+*.key
+*.cert
+*.pfx
+*.p12
+
+# Database & SQLite files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Backups & Data Dumps
+backups/
+*.bak
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj

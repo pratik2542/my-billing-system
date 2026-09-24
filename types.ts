@@ -112,6 +112,8 @@ export interface BusinessSettings {
   declarationText?: string;
   // Analytics & AI Visibility Toggles (Admin)
   analyticsVisibility?: AnalyticsVisibilitySettings;
+  showUnitInBillRow?: boolean; // Option to show/hide the 'Show Unit in Bill Rows' checkbox in Create Bill (default true)
+  showProductPriceInDropdown?: boolean; // Option to show/hide price in catalog dropdown (default true)
 }
 
 export type PaymentMode = 'Cash' | 'UPI' | 'Cheque' | 'Bank Transfer' | 'Other';
@@ -122,6 +124,10 @@ export interface PaymentEntry {
   mode: PaymentMode;
   date: string; // DD/MM/YYYY
   note?: string;
+  isDeleted?: boolean;
+  deletedAt?: number | string;
+  deletedBy?: string;
+  deletedByName?: string;
 }
 
 export type InvoiceAuditAction = 
@@ -216,7 +222,8 @@ export enum AppTab {
   PRODUCTS = 'PRODUCTS',
   CUSTOMERS = 'CUSTOMERS',
   SETTINGS = 'SETTINGS',
-  ADMIN_PORTAL = 'ADMIN_PORTAL'
+  ADMIN_PORTAL = 'ADMIN_PORTAL',
+  USERS = 'USERS'
 }
 
 export interface UserProfile {
@@ -234,6 +241,7 @@ export interface UserProfile {
   businessName?: string;
   role?: 'owner' | 'member' | 'admin';
   analyticsPermissions?: AnalyticsVisibilitySettings;
+  analyticsVisibility?: AnalyticsVisibilitySettings;
   activeSessionId?: string;
   activeSessionDevice?: string;
   createdAt: number;

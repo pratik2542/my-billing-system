@@ -12,7 +12,7 @@ import {
   Smartphone, Monitor, Tablet, Clock, Sparkles, Bug, BarChart3, CheckCircle2, Eye, Building,
   Upload, Download, KeyRound, Edit, Mail, Calendar, TrendingUp, DollarSign, PieChart, Layers,
   Zap, Award, UserCheck, Filter, ArrowUpRight, FileText, Package, CreditCard, Trash2, Sliders,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Columns, RotateCcw, Save
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Columns, RotateCcw, Save, Copy, Check
 } from "lucide-react";
 
 // ---- Helpers ----
@@ -840,12 +840,948 @@ const UserDetailDrawer: React.FC<{ profile: UserProfile; activityLogs?: UserActi
   );
 };
 
+// ---- Export for Offline Modal (Per-Business or All) ----
+const ExportOfflineModal: React.FC<{
+  profiles: UserProfile[];
+  onClose: () => void;
+}> = ({ profiles, onClose }) => {
+  const businessOptions = useMemo(() => {
+    const list: Array<{ businessId: string; name: string }> = [];
+    const seen = new Set<string>();
+    profiles.forEach(p => {
+      const bId = p.businessId || p.uid;
+      if (bId && !seen.has(bId)) {
+        seen.add(bId);
+        list.push({
+          businessId: bId,
+          name: p.businessName || p.displayName || p.email.split("@")[0]
+        });
+      }
+    });
+    return list;
+  }, [profiles]);
+
+  const [targetBusinessId, setTargetBusinessId] = useState<string>(
+    businessOptions.length > 0 ? businessOptions[0].businessId : "all"
+  );
+  const [isExporting, setIsExporting] = useState(false);
+
+  const selectedBusinessName = useMemo(() => {
+    if (targetBusinessId === "all") return "All Businesses";
+    const found = businessOptions.find(b => b.businessId === targetBusinessId);
+    return found?.name || targetBusinessId;
+  }, [targetBusinessId, businessOptions]);
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const targets = targetBusinessId === "all"
+        ? businessOptions.map(b => b.businessId)
+        : [targetBusinessId];
+
+      const exportData: any = {
+        version: 1,
+        exportedAt: Date.now(),
+        exportFormat: "cloud-to-offline",
+        targetBusinessId: targetBusinessId === "all" ? "all" : targetBusinessId,
+        targetBusinessName: selectedBusinessName,
+        settings: null,
+        products: [],
+        customers: [],
+        invoices: [],
+      };
+
+      for (const wId of targets) {
+        try {
+          const [settingsSnap, productsSnap, customersSnap, invoicesSnap] = await Promise.all([
+            getDocs(collection(db, "users", wId, "settings")).catch(() => null),
+            getDocs(collection(db, "users", wId, "products")).catch(() => null),
+            getDocs(collection(db, "users", wId, "customers")).catch(() => null),
+            getDocs(collection(db, "users", wId, "invoices")).catch(() => null),
+          ]);
+
+          const settingsDoc = settingsSnap?.docs.find(d => d.id === "general");
+          if (!exportData.settings && settingsDoc) {
+            exportData.settings = settingsDoc.data();
+          }
+
+          const prods = productsSnap?.docs.map(d => ({ id: d.id, ...d.data() })) || [];
+          const custs = customersSnap?.docs.map(d => ({ id: d.id, ...d.data() })) || [];
+          const invs = invoicesSnap?.docs.map(d => ({ ...d.data() })) || [];
+
+          exportData.products.push(...prods);
+          exportData.customers.push(...custs);
+          exportData.invoices.push(...invs);
+        } catch (err) {
+          console.warn("Could not export workspace:", wId, err);
+        }
+      }
+
+      const jsonStr = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([jsonStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const dateStr = new Date().toISOString().split("T")[0];
+      const safeName = selectedBusinessName.replace(/[^a-zA-Z0-9_-]/g, "_");
+      a.href = url;
+      a.download = `billing-export-${safeName}-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      alert(`✅ Export complete for ${selectedBusinessName}!\n\nInvoices: ${exportData.invoices.length}\nProducts: ${exportData.products.length}\nCustomers: ${exportData.customers.length}\n\nFile downloaded: billing-export-${safeName}-${dateStr}.json`);
+      onClose();
+    } catch (e: any) {
+      alert("❌ Export failed: " + (e.message || "Unknown error"));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-3 sm:p-4 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+        <div className="bg-gradient-to-r from-emerald-700 to-teal-800 text-white p-5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-white/10 rounded-xl">
+              <Download size={22} className="text-emerald-100" />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg leading-tight">Export for Offline App</h2>
+              <p className="text-xs text-emerald-100 mt-0.5">Choose which business data to export</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-full text-white/80 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Select Business Account *
+            </label>
+            <select
+              value={targetBusinessId}
+              onChange={(e) => setTargetBusinessId(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-slate-50 focus:ring-2 focus:ring-emerald-500 font-medium outline-none"
+            >
+              {businessOptions.map(b => (
+                <option key={b.businessId} value={b.businessId}>
+                  🏢 {b.name}
+                </option>
+              ))}
+              <option value="all">📦 All Businesses (Full Backup)</option>
+            </select>
+          </div>
+
+          <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-3.5 text-xs text-emerald-900 space-y-1.5">
+            <div className="font-bold flex items-center gap-1.5 text-emerald-800">
+              <ShieldCheck size={16} /> Privacy & Isolation:
+            </div>
+            <p className="text-slate-600 leading-relaxed">
+              {targetBusinessId === "all"
+                ? "All businesses will be exported into one combined JSON file."
+                : `Only the products, customers, invoices, and settings of "${selectedBusinessName}" will be exported. No other business's data will be included.`}
+            </p>
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={isExporting}
+              className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-lg flex items-center gap-2 shadow-xs"
+            >
+              {isExporting ? (
+                <><Loader2 size={15} className="animate-spin" /> Exporting...</>
+              ) : (
+                <><Download size={15} /> Download Export JSON</>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---- Offline Client & License Types ----
+export interface OfflineClient {
+  id: string;
+  customerName: string;
+  adminEmail: string;
+  fingerprint: string;
+  expiryMode: "lifetime" | "1year";
+  expiresAt: number;
+  autoUpdates: "manual" | "silent" | "disabled";
+  ollamaModel: string;
+  features: string[];
+  licenseKey: string;
+  createdAt: number;
+  updatedAt: number;
+  status?: "active" | "revoked";
+}
+
+// ---- Offline License Key Generator & Cloud Sync Modal ----
+const OfflineLicenseModal: React.FC<{
+  profiles: UserProfile[];
+  clientToEdit?: OfflineClient | null;
+  onClose: () => void;
+  onSaved?: (client: OfflineClient) => void;
+}> = ({ profiles, clientToEdit, onClose, onSaved }) => {
+  const [customerName, setCustomerName] = useState(clientToEdit?.customerName || "");
+  const [adminEmail, setAdminEmail] = useState(clientToEdit?.adminEmail || "");
+  const [fingerprint, setFingerprint] = useState(clientToEdit?.fingerprint || "");
+  const [expiryMode, setExpiryMode] = useState<"lifetime" | "1year">(clientToEdit?.expiryMode || "lifetime");
+  const [autoUpdates, setAutoUpdates] = useState<"manual" | "silent" | "disabled">(clientToEdit?.autoUpdates || "manual");
+  const [ollamaModel, setOllamaModel] = useState(clientToEdit?.ollamaModel || "qwen2.5:7b");
+
+  // Feature Toggles (if editing, initialize from client's existing features)
+  const [enableAnalytics, setEnableAnalytics] = useState(clientToEdit ? clientToEdit.features.includes("analytics") : true);
+  const [enableAiAnalyst, setEnableAiAnalyst] = useState(clientToEdit ? clientToEdit.features.includes("ai") : true);
+  const [enablePayments, setEnablePayments] = useState(clientToEdit ? clientToEdit.features.includes("payments") : true);
+  const [enableProductsMenu, setEnableProductsMenu] = useState(clientToEdit ? clientToEdit.features.includes("products") : true);
+  const [enableCustomersMenu, setEnableCustomersMenu] = useState(clientToEdit ? clientToEdit.features.includes("customers") : true);
+  const [enableGst, setEnableGst] = useState(clientToEdit ? clientToEdit.features.includes("gst") : true);
+  const [enableCsvImport, setEnableCsvImport] = useState(clientToEdit ? clientToEdit.features.includes("csv") : true);
+  const [enableAuditTrail, setEnableAuditTrail] = useState(clientToEdit ? clientToEdit.features.includes("audit") : true);
+  const [enableCloudImport, setEnableCloudImport] = useState(clientToEdit ? clientToEdit.features.includes("cloudimport") : true);
+
+  // Result state
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+  const [generatedFeatures, setGeneratedFeatures] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+
+  // Master signing key: loaded from local .env or sessionStorage (NEVER hardcoded in source)
+  const [signingKey, setSigningKey] = useState<string>(() => {
+    return (
+      (import.meta as any).env?.VITE_LICENSE_PRIVATE_KEY ||
+      sessionStorage.getItem("admin_license_signing_key") ||
+      ""
+    );
+  });
+  const [showKeyField, setShowKeyField] = useState(false);
+
+  // Business options from existing profiles
+  const businessNames = useMemo(() => {
+    const set = new Set<string>();
+    profiles.forEach(p => {
+      if (p.businessName?.trim()) set.add(p.businessName.trim());
+      else if (p.displayName?.trim()) set.add(p.displayName.trim());
+    });
+    return Array.from(set);
+  }, [profiles]);
+
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const cleanFp = fingerprint.trim().toLowerCase();
+    if (!cleanFp || cleanFp.length < 32) {
+      setError("Please enter a valid hardware machine fingerprint (at least 32 characters hex).");
+      return;
+    }
+    if (!customerName.trim()) {
+      setError("Please enter the client / customer business name.");
+      return;
+    }
+    if (!adminEmail.trim() || !adminEmail.includes("@")) {
+      setError("Please enter a valid admin email address (used for the primary colleague administrator).");
+      return;
+    }
+
+    const activeKey = (
+      signingKey.trim() ||
+      ((import.meta as any).env?.VITE_LICENSE_PRIVATE_KEY || "").trim() ||
+      sessionStorage.getItem("admin_license_signing_key") ||
+      ""
+    ).trim().replace(/\s+/g, "");
+
+    if (!activeKey || activeKey.length < 32) {
+      setError("Please enter your Master Private Signing Key (or configure VITE_LICENSE_PRIVATE_KEY in .env).");
+      setShowKeyField(true);
+      return;
+    }
+
+    setGenerating(true);
+    try {
+      try {
+        sessionStorage.setItem("admin_license_signing_key", activeKey);
+      } catch {}
+
+      const features = [
+        enableAnalytics ? "analytics" : "",
+        enableAiAnalyst ? "ai" : "",
+        enablePayments ? "payments" : "",
+        enableProductsMenu ? "products" : "",
+        enableCustomersMenu ? "customers" : "",
+        enableGst ? "gst" : "",
+        enableCsvImport ? "csv" : "",
+        enableAuditTrail ? "audit" : "",
+        enableCloudImport ? "cloudimport" : "",
+      ].filter(Boolean);
+
+      const expiresAt = expiryMode === "lifetime" ? -1 : Date.now() + 365 * 24 * 60 * 60 * 1000;
+
+      const licensePayload: any = {
+        fingerprint: cleanFp,
+        customerName: customerName.trim(),
+        adminEmail: adminEmail.trim().toLowerCase(),
+        issuedAt: Date.now(),
+        expiresAt,
+        features,
+        version: 2,
+      };
+
+      // Sign with Ed25519 Private Key via WebCrypto
+      const privKeyBytes = new Uint8Array(activeKey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+      const cryptoKey = await window.crypto.subtle.importKey(
+        "pkcs8",
+        privKeyBytes,
+        { name: "Ed25519" },
+        false,
+        ["sign"]
+      );
+
+      const payloadStr = JSON.stringify(licensePayload);
+      const sigBuf = await window.crypto.subtle.sign(
+        { name: "Ed25519" },
+        cryptoKey,
+        new TextEncoder().encode(payloadStr)
+      );
+
+      const sigBytes = new Uint8Array(sigBuf);
+      let sigBin = "";
+      for (let i = 0; i < sigBytes.length; i++) sigBin += String.fromCharCode(sigBytes[i]);
+      const sigBase64Url = btoa(sigBin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+      const envelope = {
+        p: licensePayload,
+        s: sigBase64Url,
+      };
+
+      const envBytes = new TextEncoder().encode(JSON.stringify(envelope));
+      let envBin = "";
+      for (let i = 0; i < envBytes.length; i++) envBin += String.fromCharCode(envBytes[i]);
+      const licKey = btoa(envBin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+      // Also create features payload
+      const featuresPayload = {
+        enableAnalytics,
+        enableAiAnalyst,
+        ollamaModel,
+        enablePaymentTracking: enablePayments,
+        enableProductsMenu,
+        enableCustomersMenu,
+        enableGst,
+        enableCsvImport,
+        enableAuditTrail,
+        enableCloudImport,
+        autoUpdates,
+        maxInvoicesPerMonth: -1,
+        customerName: customerName.trim(),
+        installedAt: Date.now(),
+        featureVersion: 1,
+      };
+
+      // Save to Cloud Firestore collection 'offlineClients'
+      const clientId = clientToEdit?.id || `off_${cleanFp.slice(0, 10)}_${Date.now()}`;
+      const record: OfflineClient = {
+        id: clientId,
+        customerName: customerName.trim(),
+        adminEmail: adminEmail.trim().toLowerCase(),
+        fingerprint: cleanFp,
+        expiryMode,
+        expiresAt,
+        autoUpdates,
+        ollamaModel,
+        features,
+        licenseKey: licKey,
+        createdAt: clientToEdit?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        status: "active",
+      };
+
+      let cloudSaveWarning: string | null = null;
+      try {
+        await setDoc(doc(db, "offlineClients", clientId), record);
+      } catch (cloudErr: any) {
+        console.warn("Could not sync offline client to Firestore (check Firestore security rules):", cloudErr);
+        cloudSaveWarning = cloudErr.code === "permission-denied" || cloudErr.message?.includes("Missing or insufficient permissions")
+          ? "Key generated successfully! Note: Could not save record to Cloud Firestore because 'offlineClients' collection write rule is not enabled in Firebase Console."
+          : `Key generated successfully! Cloud sync notice: ${cloudErr.message || "Failed to save to Firestore."}`;
+      }
+
+      setGeneratedKey(licKey);
+      setGeneratedFeatures(JSON.stringify(featuresPayload, null, 2));
+      if (cloudSaveWarning) {
+        setError(cloudSaveWarning);
+      }
+      if (onSaved) onSaved(record);
+    } catch (err: any) {
+      setError(err.message || "Failed to generate offline license.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleCopyKey = () => {
+    if (generatedKey) {
+      navigator.clipboard.writeText(generatedKey);
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
+    }
+  };
+
+  const handleDownloadFiles = () => {
+    if (!generatedKey || !generatedFeatures) return;
+    const safeName = customerName.trim().replace(/[^a-zA-Z0-9_-]/g, "_") || "client";
+
+    const blobKey = new Blob([generatedKey], { type: "text/plain" });
+    const urlKey = URL.createObjectURL(blobKey);
+    const a1 = document.createElement("a");
+    a1.href = urlKey;
+    a1.download = `license_${safeName}.key`;
+    document.body.appendChild(a1);
+    a1.click();
+    document.body.removeChild(a1);
+    URL.revokeObjectURL(urlKey);
+
+    setTimeout(() => {
+      const blobFeat = new Blob([generatedFeatures], { type: "text/plain" });
+      const urlFeat = URL.createObjectURL(blobFeat);
+      const a2 = document.createElement("a");
+      a2.href = urlFeat;
+      a2.download = `features_${safeName}.dat`;
+      document.body.appendChild(a2);
+      a2.click();
+      document.body.removeChild(a2);
+      URL.revokeObjectURL(urlFeat);
+    }, 300);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/70 flex items-center justify-center p-3 sm:p-4 backdrop-blur-sm overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-6 overflow-hidden border border-slate-200">
+        <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white p-5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-white/10 rounded-xl">
+              <KeyRound size={22} className="text-amber-100" />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg sm:text-xl leading-tight">
+                {clientToEdit ? `Edit & Regenerate License: ${clientToEdit.customerName}` : "Offline License Generator & Cloud Sync"}
+              </h2>
+              <p className="text-xs text-amber-100 mt-0.5">
+                Generate cryptographic license keys and save customer access records permanently in the Cloud
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-full transition-colors text-white/80 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs flex items-center gap-2">
+              <AlertTriangle size={16} className="shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {!generatedKey ? (
+            <form onSubmit={handleGenerate} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Customer / Business Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="e.g. Ramesh Super Market"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  />
+                  {businessNames.length > 0 && !clientToEdit && (
+                    <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">Quick Fill:</span>
+                      {businessNames.slice(0, 4).map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => setCustomerName(name)}
+                          className="text-[10px] bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 transition-colors"
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Local Admin Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={adminEmail}
+                    onChange={(e) => setAdminEmail(e.target.value)}
+                    placeholder="admin@customerbiz.com"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    🔑 Main admin of the local app who can create accounts for colleagues.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Machine Fingerprint (From Customer PC) *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const text = await navigator.clipboard.readText();
+                        if (text) setFingerprint(text.trim());
+                      } catch {
+                        alert("Could not access clipboard. Please paste manually into the box.");
+                      }
+                    }}
+                    className="text-[11px] text-amber-600 hover:text-amber-700 font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    Paste from Clipboard
+                  </button>
+                </div>
+                <textarea
+                  rows={2}
+                  required
+                  value={fingerprint}
+                  onChange={(e) => setFingerprint(e.target.value)}
+                  placeholder="Paste 64-character SHA-256 fingerprint displayed on client's activation screen..."
+                  className="w-full px-3 py-2 font-mono text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  💡 Hardware fingerprint displayed on the client's PC activation screen.
+                </p>
+              </div>
+
+              {/* Master Private Signing Key (Configurable in UI or .env, never hardcoded in git) */}
+              <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <KeyRound size={13} className="text-amber-600" />
+                    Master Private Signing Key *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowKeyField(!showKeyField)}
+                    className="text-[11px] text-amber-700 hover:text-amber-800 font-semibold underline"
+                  >
+                    {showKeyField ? "Hide Key" : signingKey ? "Configured ✓ (Click to edit)" : "Enter Key"}
+                  </button>
+                </div>
+                {(showKeyField || !signingKey) ? (
+                  <input
+                    type="password"
+                    value={signingKey}
+                    onChange={(e) => {
+                      setSigningKey(e.target.value);
+                      try {
+                        sessionStorage.setItem("admin_license_signing_key", e.target.value.trim());
+                      } catch {}
+                    }}
+                    placeholder="Paste Ed25519 PKCS#8 private key hex (loaded automatically from .env if set)..."
+                    className="w-full px-3 py-1.5 font-mono text-xs border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 bg-white outline-none"
+                  />
+                ) : (
+                  <div className="text-[11px] text-emerald-700 font-medium flex items-center gap-1">
+                    <span>✓ Active signing key loaded safely from session / local environment.</span>
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-500 mt-1">
+                  🔒 Kept in memory/browser session only. Never saved in source files or pushed to GitHub.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">License Expiry</label>
+                  <select
+                    value={expiryMode}
+                    onChange={(e) => setExpiryMode(e.target.value as any)}
+                    className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none font-medium"
+                  >
+                    <option value="lifetime">⭐ Lifetime (No Expiry)</option>
+                    <option value="1year">1 Year License</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Auto-Updates</label>
+                  <select
+                    value={autoUpdates}
+                    onChange={(e) => setAutoUpdates(e.target.value as any)}
+                    className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none font-medium"
+                  >
+                    <option value="manual">Manual (Customer notified)</option>
+                    <option value="silent">Silent (Auto-install in background)</option>
+                    <option value="disabled">Disabled (No checks)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-2">Features Included in License</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableAnalytics} onChange={(e) => setEnableAnalytics(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">📊 Analytics & Dashboard</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enablePayments} onChange={(e) => setEnablePayments(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">💳 Payment Tracking</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableProductsMenu} onChange={(e) => setEnableProductsMenu(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">📦 Products Directory</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableCustomersMenu} onChange={(e) => setEnableCustomersMenu(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">👥 Customers Directory</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableGst} onChange={(e) => setEnableGst(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">🧾 GST Billing & Tax</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableCsvImport} onChange={(e) => setEnableCsvImport(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">📥 CSV Bulk Import</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableAuditTrail} onChange={(e) => setEnableAuditTrail(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">📜 Invoice Audit Trail</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={enableCloudImport} onChange={(e) => setEnableCloudImport(e.target.checked)} className="rounded text-amber-600 focus:ring-amber-500" />
+                    <span className="font-semibold text-slate-700">☁️ Cloud → Offline Import</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-violet-50/60 rounded-xl border border-violet-100">
+                <label className="flex items-center gap-2 text-xs font-bold text-violet-900 cursor-pointer mb-2">
+                  <input type="checkbox" checked={enableAiAnalyst} onChange={(e) => setEnableAiAnalyst(e.target.checked)} className="rounded text-violet-600 focus:ring-violet-500" />
+                  <span>🤖 Enable Offline AI Business Analyst (Ollama)</span>
+                </label>
+                {enableAiAnalyst && (
+                  <div className="mt-2 pl-6">
+                    <label className="block text-[11px] font-bold text-violet-700 mb-1">Recommended Model</label>
+                    <select
+                      value={ollamaModel}
+                      onChange={(e) => setOllamaModel(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-violet-200 rounded-lg outline-none font-medium text-slate-700"
+                    >
+                      <option value="qwen2.5:7b">qwen2.5:7b (⭐ Recommended — Best for billing, financial queries & GST)</option>
+                      <option value="phi3.5:mini">phi3.5:mini (Lightweight ~2.2 GB — For older 4–6 GB RAM PCs)</option>
+                      <option value="qwen2.5:14b">qwen2.5:14b (~9 GB — For 16–32 GB RAM workstations)</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={generating}
+                  className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60 rounded-lg flex items-center gap-2 transition-colors shadow-xs cursor-pointer"
+                >
+                  {generating ? (
+                    <><Loader2 size={15} className="animate-spin" /> Saving & Generating...</>
+                  ) : clientToEdit ? (
+                    <><Zap size={15} /> Regenerate Key & Save to Cloud</>
+                  ) : (
+                    <><Zap size={15} /> Generate License & Save to Cloud</>
+                  )}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl flex items-start gap-3">
+                <CheckCircle2 size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-sm">License Successfully Generated!</div>
+                  <div className="text-xs text-emerald-700 mt-0.5">
+                    Hardware-locked for <strong>{customerName}</strong> ({expiryMode === "lifetime" ? "Lifetime" : "1 Year"}). Admin email: <strong>{adminEmail}</strong>.
+                  </div>
+                </div>
+              </div>
+
+              {error && (
+                <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs flex items-start gap-2">
+                  <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                    🔑 Client License Key
+                  </label>
+                  <button
+                    onClick={handleCopyKey}
+                    className="flex items-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1 rounded-lg transition-colors shadow-xs cursor-pointer"
+                  >
+                    {copiedKey ? <Check size={14} /> : <Copy size={14} />}
+                    <span>{copiedKey ? "Copied to Clipboard!" : "Copy License Key"}</span>
+                  </button>
+                </div>
+                <div className="bg-slate-900 text-amber-300 font-mono text-xs p-3.5 rounded-xl border border-slate-800 break-all select-all shadow-inner">
+                  {generatedKey}
+                </div>
+              </div>
+
+              <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-4 text-xs text-amber-900 space-y-2">
+                <div className="font-bold flex items-center gap-1.5 text-amber-800 text-sm">
+                  <Sparkles size={16} /> How to activate on Customer's PC:
+                </div>
+                <ol className="list-decimal pl-5 space-y-1 text-slate-700 font-medium">
+                  <li>On the customer's PC, open the installed <strong>Billing System</strong> desktop app.</li>
+                  <li>Paste this <strong>License Key</strong> into the activation box and click <strong>Activate System</strong>.</li>
+                  <li>The app unlocks immediately, saves the license permanently on their PC, and opens the dashboard!</li>
+                </ol>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setGeneratedKey(null); setGeneratedFeatures(null); }}
+                  className="w-full sm:w-auto text-xs text-slate-600 font-bold px-3 py-2 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  ← Generate Another Key
+                </button>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={handleDownloadFiles}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 px-3.5 py-2 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                    title="Download license.key and features.dat files for USB transfer"
+                  >
+                    <Download size={14} /> Download Files (USB)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="flex-1 sm:flex-none text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 px-4 py-2 rounded-lg transition-colors cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ---- Offline Clients Tab Content (Cloud Management) ----
+const OfflineClientsTabContent: React.FC<{
+  clients: OfflineClient[];
+  loading: boolean;
+  onAddNew: () => void;
+  onEditClient: (client: OfflineClient) => void;
+  onDeleteClient: (id: string, name: string) => void;
+}> = ({ clients, loading, onAddNew, onEditClient, onDeleteClient }) => {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const filteredClients = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return clients;
+    return clients.filter(c =>
+      c.customerName.toLowerCase().includes(q) ||
+      (c.adminEmail && c.adminEmail.toLowerCase().includes(q)) ||
+      c.fingerprint.toLowerCase().includes(q)
+    );
+  }, [clients, searchQuery]);
+
+  const handleCopyKey = (client: OfflineClient) => {
+    navigator.clipboard.writeText(client.licenseKey);
+    setCopiedId(client.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  return (
+    <div className="p-4 md:p-6 space-y-4">
+      {/* Top Bar */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-gradient-to-r from-amber-500/10 to-orange-500/10 p-4 rounded-xl border border-amber-200/60">
+        <div>
+          <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <KeyRound size={18} className="text-amber-600" /> Offline Desktop Clients &amp; License Keys
+          </h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Cloud database of all your offline client installations, assigned features, and hardware licenses.
+          </p>
+        </div>
+        <button
+          onClick={onAddNew}
+          className="bg-amber-600 hover:bg-amber-700 text-white text-xs md:text-sm font-bold px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm cursor-pointer"
+        >
+          <KeyRound size={16} /> Generate New Client License
+        </button>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3.5 py-2">
+        <Filter size={16} className="text-slate-400" />
+        <input
+          type="text"
+          placeholder="Search by business name, admin email, or hardware fingerprint..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full text-xs sm:text-sm outline-none bg-transparent"
+        />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery("")} className="text-slate-400 hover:text-slate-600 text-xs">
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* Clients List */}
+      {loading ? (
+        <div className="p-12 text-center text-slate-400 text-sm">
+          <Loader2 size={24} className="animate-spin mx-auto mb-2" />
+          Loading offline clients from Cloud...
+        </div>
+      ) : filteredClients.length === 0 ? (
+        <div className="p-12 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
+          <KeyRound size={40} className="mx-auto mb-2 opacity-30 text-amber-600" />
+          <p className="font-semibold text-slate-700 text-sm">No offline clients found</p>
+          <p className="text-xs text-slate-400 mt-1">
+            When you generate a license key, client data is automatically stored here in Firestore so you can view, edit, or regenerate keys anytime.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredClients.map((client) => {
+            return (
+              <div key={client.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3.5 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-base">{client.customerName}</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">Admin Email: <span className="font-semibold text-slate-700">{client.adminEmail || "Not specified"}</span></p>
+                    </div>
+                    <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full border ${
+                      client.expiryMode === "lifetime"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : "bg-amber-50 text-amber-700 border-amber-200"
+                    }`}>
+                      {client.expiryMode === "lifetime" ? "⭐ Lifetime" : "1 Year"}
+                    </span>
+                  </div>
+
+                  {/* Fingerprint */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs mt-3">
+                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Hardware Machine Hash</div>
+                    <div className="font-mono text-[11px] text-slate-700 break-all select-all">
+                      {client.fingerprint}
+                    </div>
+                  </div>
+
+                  {/* Features badges */}
+                  <div className="mt-3">
+                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1.5">Enabled Features</div>
+                    <div className="flex flex-wrap gap-1">
+                      {client.features?.map(feat => (
+                        <span key={feat} className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium border border-slate-200">
+                          {feat}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer & Actions */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] text-slate-400">
+                    Updated: {new Date(client.updatedAt || client.createdAt).toLocaleDateString()}
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleCopyKey(client)}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Copy License Key to Clipboard"
+                    >
+                      {copiedId === client.id ? <Check size={13} /> : <Copy size={13} />}
+                      <span>{copiedId === client.id ? "Copied" : "Copy Key"}</span>
+                    </button>
+
+                    <button
+                      onClick={() => onEditClient(client)}
+                      className="bg-amber-50 hover:bg-amber-100 text-amber-700 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Edit features and regenerate a new key"
+                    >
+                      <Edit size={13} /> Edit &amp; Regenerate
+                    </button>
+
+                    <button
+                      onClick={() => onDeleteClient(client.id, client.customerName)}
+                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      title="Delete client record"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ---- Main AdminPortal ----
-type AdminTab = "users" | "businesses" | "errors" | "usage";
+type AdminTab = "users" | "businesses" | "offline_clients" | "errors" | "usage";
 
 export const AdminPortal: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [offlineClients, setOfflineClients] = useState<OfflineClient[]>([]);
+  const [offlineClientsLoading, setOfflineClientsLoading] = useState(true);
+  const [editingOfflineClient, setEditingOfflineClient] = useState<OfflineClient | null>(null);
   const [allErrors, setAllErrors] = useState<Array<AppErrorLog & { userEmail: string }>>([]);
   const [allInvoices, setAllInvoices] = useState<Array<{ id: string; date?: string; total?: number; customerName?: string; workspaceId: string; timestamp?: number }>>([]);
   const [allActivityLogs, setAllActivityLogs] = useState<Array<UserActivityLog & { userEmail: string; userId: string }>>([]);
@@ -859,6 +1795,78 @@ export const AdminPortal: React.FC = () => {
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [inspectingBusiness, setInspectingBusiness] = useState<{ businessId: string; businessName: string } | null>(null);
   const [managingInvoicesBusiness, setManagingInvoicesBusiness] = useState<{ businessId: string; businessName: string } | null>(null);
+  const [isExportingOffline, setIsExportingOffline] = useState(false);
+  const [showOfflineLicenseModal, setShowOfflineLicenseModal] = useState(false);
+  const [showExportOfflineModal, setShowExportOfflineModal] = useState(false);
+
+  // ── Export for Offline Import ─────────────────────────────────────────────
+  const handleExportForOffline = useCallback(async () => {
+    setIsExportingOffline(true);
+    try {
+      // Gather all data from Firestore for the active workspace
+      const workspaceIds = Array.from(
+        new Set([...profiles.map((p) => p.businessId || p.uid).filter(Boolean)])
+      );
+
+      const exportData: any = {
+        version: 1,
+        exportedAt: Date.now(),
+        exportFormat: 'cloud-to-offline',
+        workspaces: [],
+      };
+
+      for (const wId of workspaceIds) {
+        try {
+          const [settingsSnap, productsSnap, customersSnap, invoicesSnap] = await Promise.all([
+            getDocs(collection(db, 'users', wId, 'settings')).catch(() => null),
+            getDocs(collection(db, 'users', wId, 'products')).catch(() => null),
+            getDocs(collection(db, 'users', wId, 'customers')).catch(() => null),
+            getDocs(collection(db, 'users', wId, 'invoices')).catch(() => null),
+          ]);
+
+          const settingsDoc = settingsSnap?.docs.find(d => d.id === 'general');
+          const workspace: any = {
+            businessId: wId,
+            settings: settingsDoc ? settingsDoc.data() : null,
+            products: productsSnap?.docs.map(d => ({ id: d.id, ...d.data() })) || [],
+            customers: customersSnap?.docs.map(d => ({ id: d.id, ...d.data() })) || [],
+            invoices: invoicesSnap?.docs.map(d => ({ ...d.data() })) || [],
+          };
+
+          // Top-level structure expected by offline import
+          if (!exportData.settings && workspace.settings) exportData.settings = workspace.settings;
+          exportData.products = [...(exportData.products || []), ...workspace.products];
+          exportData.customers = [...(exportData.customers || []), ...workspace.customers];
+          exportData.invoices = [...(exportData.invoices || []), ...workspace.invoices];
+          exportData.workspaces.push(workspace);
+        } catch (err) {
+          console.warn('Could not export workspace:', wId, err);
+        }
+      }
+
+      // Trigger file download
+      const jsonStr = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dateStr = new Date().toISOString().split('T')[0];
+      a.href = url;
+      a.download = `billing-export-offline-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      const invoiceCount = exportData.invoices?.length || 0;
+      const productCount = exportData.products?.length || 0;
+      const customerCount = exportData.customers?.length || 0;
+      alert(`✅ Export complete!\n\nInvoices: ${invoiceCount}\nProducts: ${productCount}\nCustomers: ${customerCount}\n\nFile: billing-export-offline-${dateStr}.json\n\nImport this file in the offline desktop app: Settings → Import from Cloud.`);
+    } catch (e: any) {
+      alert('❌ Export failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setIsExportingOffline(false);
+    }
+  }, [profiles]);
 
   // 1. Live User Profiles Listener
   useEffect(() => {
@@ -866,6 +1874,25 @@ export const AdminPortal: React.FC = () => {
       query(collection(db, "userProfiles"), orderBy("createdAt", "desc")),
       (snap) => { setProfiles(snap.docs.map((d) => ({ uid: d.id, ...d.data() } as UserProfile))); setLoading(false); },
       (err) => { console.warn("Admin profiles listener error:", err.message); setLoading(false); }
+    );
+    return () => unsub();
+  }, []);
+
+  // 1b. Live Offline Clients Listener
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "offlineClients"),
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as OfflineClient));
+        // Sort by createdAt desc
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setOfflineClients(list);
+        setOfflineClientsLoading(false);
+      },
+      (err) => {
+        console.warn("Offline clients listener error:", err.message);
+        setOfflineClientsLoading(false);
+      }
     );
     return () => unsub();
   }, []);
@@ -1066,6 +2093,17 @@ export const AdminPortal: React.FC = () => {
   const totalInvoices = totalInvoicesCount > 0 ? totalInvoicesCount : enrichedProfiles.reduce((s, p) => s + (p.invoiceCount || 0), 0);
   const tabCls = (t: AdminTab) => `flex items-center justify-center gap-1 sm:gap-1.5 px-1 sm:px-4 py-2.5 text-[10px] sm:text-xs font-bold uppercase tracking-tight sm:tracking-wide border-b-2 transition-colors ${activeTab === t ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-500 hover:text-slate-700"}`;
 
+  const handleDeleteOfflineClient = async (id: string, name: string) => {
+    if (!window.confirm(`Are you sure you want to remove offline client record "${name}" from Cloud storage?\n\nNote: If this client has already activated their desktop app with their key, the app continues to validate locally offline until expired.`)) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "offlineClients", id));
+    } catch (e: any) {
+      alert("Failed to delete offline client record: " + (e.message || "Unknown error"));
+    }
+  };
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="max-w-6xl mx-auto w-full bg-white md:rounded-lg shadow-sm border-0 md:border border-slate-200 flex flex-col h-full overflow-hidden">
@@ -1074,9 +2112,25 @@ export const AdminPortal: React.FC = () => {
             <h2 className="text-lg sm:text-xl md:text-2xl font-bold flex items-center gap-2"><ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-400"/>Admin Portal</h2>
             <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">Manage users, login limits, activate/deactivate accounts, monitor health</p>
           </div>
-          <button onClick={() => { setPreselectedBusinessId(undefined); setShowAddUser(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors">
-            <UserPlus size={16}/> Add / Sync User
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <button
+              onClick={() => { setEditingOfflineClient(null); setShowOfflineLicenseModal(true); }}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-xs"
+              title="Generate a machine-locked offline license key for a customer's computer"
+            >
+              <KeyRound size={16}/> Offline License Keygen
+            </button>
+            <button
+              onClick={() => setShowExportOfflineModal(true)}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-xs"
+              title="Export data as JSON for import into the offline desktop app"
+            >
+              <Download size={16}/> Export for Offline
+            </button>
+            <button onClick={() => { setPreselectedBusinessId(undefined); setShowAddUser(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors shadow-xs">
+              <UserPlus size={16}/> Add / Sync User
+            </button>
+          </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-slate-200 border-b border-slate-200 shrink-0">
           <div className="p-2.5 sm:p-4 text-center">
@@ -1087,7 +2141,7 @@ export const AdminPortal: React.FC = () => {
           <div className="p-2.5 sm:p-4 text-center"><div className="text-xl sm:text-2xl font-bold text-violet-600">{totalAiRequests}</div><div className="text-[9px] sm:text-xs text-slate-500 uppercase font-bold mt-0.5 sm:mt-1 truncate">AI Requests</div></div>
           <div className="p-2.5 sm:p-4 text-center"><div className={`text-xl sm:text-2xl font-bold ${totalErrors > 0 ? "text-red-600" : "text-green-600"}`}>{totalErrors}</div><div className="text-[9px] sm:text-xs text-slate-500 uppercase font-bold mt-0.5 sm:mt-1 truncate">Total Errors</div></div>
         </div>
-        <div className="grid grid-cols-4 border-b border-slate-200 shrink-0 w-full bg-slate-50/50">
+        <div className="grid grid-cols-5 border-b border-slate-200 shrink-0 w-full bg-slate-50/50">
           <button className={tabCls("users")} onClick={() => setActiveTab("users")}>
             <Users size={14} className="shrink-0"/>
             <span className="truncate">Users<span className="hidden sm:inline"> ({enrichedProfiles.length})</span></span>
@@ -1095,6 +2149,10 @@ export const AdminPortal: React.FC = () => {
           <button className={tabCls("businesses")} onClick={() => setActiveTab("businesses")}>
             <Building size={14} className="shrink-0"/>
             <span className="truncate">Businesses</span>
+          </button>
+          <button className={tabCls("offline_clients")} onClick={() => setActiveTab("offline_clients")}>
+            <KeyRound size={14} className="shrink-0 text-amber-500"/>
+            <span className="truncate">Offline Clients<span className="hidden sm:inline"> ({offlineClients.length})</span></span>
           </button>
           <button className={tabCls("errors")} onClick={() => setActiveTab("errors")}>
             <Bug size={14} className="shrink-0"/>
@@ -1117,6 +2175,21 @@ export const AdminPortal: React.FC = () => {
             />
           )
           : activeTab === "businesses" ? <BusinessesTabContent profiles={enrichedProfiles} onAddMember={openAddUserForBusiness} onInspectBill={setInspectingBusiness} onManageInvoices={setManagingInvoicesBusiness}/>
+          : activeTab === "offline_clients" ? (
+            <OfflineClientsTabContent
+              clients={offlineClients}
+              loading={offlineClientsLoading}
+              onEditClient={(client) => {
+                setEditingOfflineClient(client);
+                setShowOfflineLicenseModal(true);
+              }}
+              onDeleteClient={handleDeleteOfflineClient}
+              onAddNew={() => {
+                setEditingOfflineClient(null);
+                setShowOfflineLicenseModal(true);
+              }}
+            />
+          )
           : activeTab === "errors" ? <ErrorLogsTabContent errors={allErrors} onRefresh={loadAllErrors}/>
           : <UsageTabContent profiles={enrichedProfiles} allInvoices={allInvoices} allActivityLogs={allActivityLogs} allErrors={allErrors}/>}
         </div>
@@ -1126,6 +2199,25 @@ export const AdminPortal: React.FC = () => {
       {editingUser && <EditUserModal profile={editingUser} onClose={() => setEditingUser(null)} onUpdated={() => setEditingUser(null)} />}
       {inspectingBusiness && <BusinessBillLayoutModal businessId={inspectingBusiness.businessId} businessName={inspectingBusiness.businessName} onClose={() => setInspectingBusiness(null)} />}
       {managingInvoicesBusiness && <BusinessInvoicesManagementModal businessId={managingInvoicesBusiness.businessId} businessName={managingInvoicesBusiness.businessName} onClose={() => setManagingInvoicesBusiness(null)} />}
+      {showOfflineLicenseModal && (
+        <OfflineLicenseModal
+          profiles={enrichedProfiles}
+          clientToEdit={editingOfflineClient}
+          onSaved={() => {
+            setEditingOfflineClient(null);
+          }}
+          onClose={() => {
+            setShowOfflineLicenseModal(false);
+            setEditingOfflineClient(null);
+          }}
+        />
+      )}
+      {showExportOfflineModal && (
+        <ExportOfflineModal
+          profiles={enrichedProfiles}
+          onClose={() => setShowExportOfflineModal(false)}
+        />
+      )}
     </div>
   );
 };

@@ -1,8 +1,10 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Invoice, Product, Customer, BusinessSettings } from '../types';
 import { CustomerSpendingModal } from './CustomerSpendingModal';
 import { ProductAnalysisModal } from './ProductAnalysisModal';
+import { VolumeDetailModal, VolumeAnalysisData } from './VolumeDetailModal';
 import { GoogleGenAI, Type } from "@google/genai";
+import { openWhatsApp, openExternal } from '../electron-api';
 import {
   BarChart3,
   TrendingUp,
@@ -30,7 +32,9 @@ import {
   Building2,
   Smartphone,
   Banknote,
-  FileText
+  FileText,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 
 interface AnalyticsDashboardProps {
@@ -40,6 +44,9 @@ interface AnalyticsDashboardProps {
   settings?: BusinessSettings;
   onAiRequest?: () => void;
   enablePaymentTracking?: boolean;
+  enableAiAnalyst?: boolean;
+  enableProductsMenu?: boolean;
+  enableCustomersMenu?: boolean;
 }
 
 interface AIAnalysisResult {
@@ -229,7 +236,35 @@ const TooltipValue = ({
   );
 };
 
-// Helper to normalize unit names dynamically across businesses (Sq Ft, Pcs, Kg, Meters, Ltr, etc.)
+// Check if unit is explicitly non-weight (e.g., printing Sq Ft, fabric Meters, hardware Pcs, liquid Ltr)
+const isNonWeightUnit = (unitStr?: string): boolean => {
+  if (!unitStr) return false;
+  const clean = unitStr.toLowerCase().replace(/[.\-_]/g, ' ').replace(/\s+/g, ' ').trim();
+  return (
+    clean.includes('sq') ||
+    clean.includes('ft') ||
+    clean.includes('feet') ||
+    clean.includes('foot') ||
+    clean.includes('sft') ||
+    clean.includes('meter') ||
+    clean.includes('mtr') ||
+    clean.includes('roll') ||
+    clean.includes('ltr') ||
+    clean.includes('liter') ||
+    clean.includes('litre') ||
+    clean.includes('ml') ||
+    clean.includes('pcs') ||
+    clean.includes('pc') ||
+    clean.includes('piece') ||
+    clean.includes('nos') ||
+    clean.includes('no') ||
+    clean.includes('box') ||
+    clean.includes('bundle') ||
+    clean.includes('set')
+  );
+};
+
+// Helper to normalize unit names dynamically across businesses (Sq Ft, Pcs, Kg, Meters, Ltr, Pkt, etc.)
 const normalizeUnitName = (rawUnit?: string, packing?: string): string => {
   let u = (rawUnit || '').trim().toLowerCase();
   if (!u && packing) {
@@ -237,15 +272,22 @@ const normalizeUnitName = (rawUnit?: string, packing?: string): string => {
     const match = text.match(/^(?:\d+(?:\.\d+)?)\s*([a-z]+)/);
     if (match) u = match[1];
   }
-  if (['sqft', 'sq ft', 'sq.ft', 'ft', 'feet', 'square feet', 'sq-ft', 'sqft.'].includes(u)) return 'Sq Ft';
-  if (['pcs', 'pc', 'piece', 'pieces', 'nos', 'no', 'num', 'unit', 'units'].includes(u)) return 'Pcs';
-  if (['kg', 'kilos', 'kilogram', 'kilograms'].includes(u)) return 'Kg';
-  if (['gm', 'g', 'gram', 'grams'].includes(u)) return 'Gm';
-  if (['meter', 'meters', 'mtr', 'm'].includes(u)) return 'Meters';
-  if (['roll', 'rolls'].includes(u)) return 'Rolls';
-  if (['box', 'boxes', 'pkt', 'packet', 'packets'].includes(u)) return 'Boxes';
-  if (['ltr', 'liter', 'litres', 'l', 'ml'].includes(u)) return 'Ltr';
-  if (!u) return 'Pcs';
+  const clean = u.replace(/[.\-_]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (['sqft', 'sq ft', 'sq feet', 'square feet', 'square foot', 'sqfoot', 'sft', 'ft', 'feet', 'foot'].includes(clean) || clean.startsWith('sq')) return 'Sq Ft';
+  if (['pcs', 'pc', 'piece', 'pieces', 'nos', 'no', 'num', 'unit', 'units'].includes(clean)) return 'Pcs';
+  if (['kg', 'kilos', 'kilogram', 'kilograms', 'kgs'].includes(clean)) return 'Kg';
+  if (['gm', 'g', 'gram', 'grams', 'gms'].includes(clean)) return 'Gm';
+  if (['meter', 'meters', 'mtr', 'mtrs', 'm'].includes(clean)) return 'Meters';
+  if (['roll', 'rolls'].includes(clean)) return 'Rolls';
+  if (['pkt', 'packet', 'packets', 'pouch', 'pouches'].includes(clean)) return 'Pkt';
+  if (['box', 'boxes', 'carton', 'cartons'].includes(clean)) return 'Boxes';
+  if (['ltr', 'liter', 'litres', 'litre', 'liters', 'l', 'ml'].includes(clean)) return 'Ltr';
+  if (['bag', 'bags', 'bori'].includes(clean)) return 'Bags';
+  if (['bundle', 'bundles'].includes(clean)) return 'Bundles';
+  if (['dozen', 'doz'].includes(clean)) return 'Dozen';
+  if (['set', 'sets'].includes(clean)) return 'Sets';
+  if (['qty'].includes(clean)) return 'Qty';
+  if (!clean) return 'Pcs';
   return (rawUnit || u).trim().charAt(0).toUpperCase() + (rawUnit || u).trim().slice(1);
 };
 
@@ -281,8 +323,13 @@ const formatVolumeSummary = (unitsMap?: Record<string, number>): {
 const getVolumeIcon = (unit: string) => {
   const u = (unit || '').toLowerCase();
   if (['sq ft', 'meters', 'roll', 'rolls'].includes(u)) return '📐';
-  if (['kg', 'gm', 'ltr'].includes(u)) return '⚖️';
-  return '📦';
+  if (['kg', 'gm', 'ton', 'quintal'].includes(u)) return '⚖️';
+  if (['ltr', 'liter', 'litres', 'ml'].includes(u)) return '🧴';
+  if (['pkt', 'packet', 'packets', 'pouch', 'pouches'].includes(u)) return '🛍️';
+  if (['bag', 'bags', 'bori'].includes(u)) return '🎒';
+  if (['pcs', 'pc', 'piece', 'pieces', 'nos', 'unit', 'units', 'qty'].includes(u)) return '🔢';
+  if (['box', 'boxes', 'carton', 'cartons'].includes(u)) return '📦';
+  return '📊';
 };
 
 // --- Auto Business Type Detection Engine ---
@@ -293,29 +340,38 @@ const BUSINESS_KEYWORDS: Record<string, { keywords: string[]; unitSignals: strin
     label: 'Printing & Signage'
   },
   grocery: {
-    keywords: ['rice', 'dal', 'sugar', 'oil', 'spice', 'masala', 'atta', 'flour', 'salt', 'tea', 'coffee', 'ghee', 'turmeric', 'chilli', 'cumin', 'coriander'],
-    unitSignals: ['kg', 'gm'],
+    keywords: ['rice', 'dal', 'sugar', 'oil', 'spice', 'masala', 'atta', 'flour', 'salt', 'tea', 'coffee', 'ghee', 'turmeric', 'chilli', 'cumin', 'coriander', 'grain', 'pulse', 'snack', 'biscuit', 'soap', 'kirana'],
+    unitSignals: ['kg', 'gm', 'pkt', 'packet', 'bag', 'bags'],
     label: 'Grocery & Spices'
   },
   textile: {
-    keywords: ['fabric', 'cloth', 'silk', 'cotton', 'polyester', 'saree', 'suit', 'dress', 'material', 'curtain', 'linen'],
-    unitSignals: ['meters', 'mtr'],
+    keywords: ['fabric', 'cloth', 'silk', 'cotton', 'polyester', 'saree', 'suit', 'dress', 'material', 'curtain', 'linen', 'yarn'],
+    unitSignals: ['meters', 'mtr', 'rolls'],
     label: 'Textile & Fabrics'
   },
   retail: {
-    keywords: ['pipe', 'wire', 'fitting', 'switch', 'bulb', 'socket', 'screw', 'nail', 'paint', 'cement', 'tool', 'hardware'],
-    unitSignals: ['pcs', 'boxes'],
+    keywords: ['pipe', 'wire', 'fitting', 'switch', 'bulb', 'socket', 'screw', 'nail', 'paint', 'cement', 'tool', 'hardware', 'plywood', 'glass'],
+    unitSignals: ['pcs'],
     label: 'Retail & Hardware'
   },
   liquid: {
-    keywords: ['water', 'juice', 'drink', 'beverage', 'milk', 'chemical', 'solvent', 'detergent', 'acid'],
+    keywords: ['water', 'juice', 'drink', 'beverage', 'milk', 'chemical', 'solvent', 'detergent', 'acid', 'syrup'],
     unitSignals: ['ltr', 'ml'],
     label: 'Liquids & Beverages'
   }
 };
 
-const detectBusinessType = (invoices: Invoice[], volumeMap: Record<string, number>): { type: string; confidence: string } => {
+const detectBusinessType = (invoices: Invoice[], volumeMap: Record<string, number>, settings?: BusinessSettings): { type: string; confidence: string } => {
   const scores: Record<string, number> = {};
+
+  // Score by business name and subtitles in settings
+  const bizNameStr = `${settings?.businessName || ''} ${settings?.name || ''} ${settings?.subName || ''}`.toLowerCase();
+  for (const [key, config] of Object.entries(BUSINESS_KEYWORDS)) {
+    scores[key] = 0;
+    config.keywords.forEach(kw => {
+      if (bizNameStr.includes(kw)) scores[key] += 6;
+    });
+  }
 
   // Score by product name keywords
   const allItemNames = new Set<string>();
@@ -325,20 +381,20 @@ const detectBusinessType = (invoices: Invoice[], volumeMap: Record<string, numbe
   const nameStr = Array.from(allItemNames).join(' ');
 
   for (const [key, config] of Object.entries(BUSINESS_KEYWORDS)) {
-    scores[key] = 0;
     config.keywords.forEach(kw => {
       if (nameStr.includes(kw)) scores[key] += 3;
     });
   }
 
-  // Score by dominant volume units
+  // Score by volume units (weighted by prominence)
   const sortedUnits = Object.entries(volumeMap).sort((a, b) => b[1] - a[1]);
-  const dominantUnit = sortedUnits.length > 0 ? sortedUnits[0][0].toLowerCase() : '';
-
-  for (const [key, config] of Object.entries(BUSINESS_KEYWORDS)) {
-    config.unitSignals.forEach(sig => {
-      if (dominantUnit.includes(sig)) scores[key] += 5;
-    });
+  if (sortedUnits.length > 0) {
+    const dominantUnit = sortedUnits[0][0].toLowerCase();
+    for (const [key, config] of Object.entries(BUSINESS_KEYWORDS)) {
+      config.unitSignals.forEach(sig => {
+        if (dominantUnit.includes(sig)) scores[key] += 4;
+      });
+    }
   }
 
   const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -425,7 +481,7 @@ const buildAIDataSummary = (
   // Payment stats (if available)
   let paymentInfo = '';
   const totalPaid = invoices.reduce((sum, inv) => {
-    const paid = (inv.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const paid = (inv.payments || []).filter(p => !p.isDeleted).reduce((s, p) => s + (Number(p.amount) || 0), 0);
     return sum + paid;
   }, 0);
   const totalBilled = invoices.reduce((sum, inv) => sum + (Number(inv.total) || 0), 0);
@@ -770,7 +826,16 @@ const sendWhatsAppPaymentReminder = (
 
   msg += `\nPlease clear the pending amount at your earliest convenience. Thank you! 🙏`;
 
-  window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+  openWhatsApp(formattedPhone, msg).then(res => {
+    if (res?.notInstalled) {
+      const wantWeb = window.confirm(
+        `⚠️ WhatsApp Desktop App is not installed on this PC.\n\nWould you like to open WhatsApp Web in your browser instead?`
+      );
+      if (wantWeb) {
+        openExternal(`https://web.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(msg)}`);
+      }
+    }
+  });
 };
 
 // Sub-Tab 1: Outstanding Debtors Tab
@@ -1272,12 +1337,38 @@ const PaymentModesTab: React.FC<{
   );
 };
 
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices, products, customers, settings, onAiRequest, enablePaymentTracking = true }) => {
-  const visibility = settings?.analyticsVisibility || {
-    showProductAnalysis: true,
-    showCustomerAnalysis: true,
-    showCustomerPurchaseDetails: true,
-    showAiBusinessAnalyst: true,
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
+  invoices,
+  products,
+  customers,
+  settings,
+  onAiRequest,
+  enablePaymentTracking = true,
+  enableAiAnalyst = true,
+  enableProductsMenu = true,
+  enableCustomersMenu = true,
+}) => {
+  // If the license or permissions don't include AI/Products/Customers, always hide the respective sections
+  const visibility = {
+    ...(settings?.analyticsVisibility || {
+      showProductAnalysis: true,
+      showCustomerAnalysis: true,
+      showCustomerPurchaseDetails: true,
+      showAiBusinessAnalyst: true,
+    }),
+    // Feature flags from admin / license override the settings-level toggle
+    showProductAnalysis: enableProductsMenu
+      ? (settings?.analyticsVisibility?.showProductAnalysis ?? true)
+      : false,
+    showCustomerAnalysis: enableCustomersMenu
+      ? (settings?.analyticsVisibility?.showCustomerAnalysis ?? true)
+      : false,
+    showCustomerPurchaseDetails: enableCustomersMenu
+      ? (settings?.analyticsVisibility?.showCustomerPurchaseDetails ?? true)
+      : false,
+    showAiBusinessAnalyst: enableAiAnalyst
+      ? (settings?.analyticsVisibility?.showAiBusinessAnalyst ?? true)
+      : false,
   };
 
   // State for global filters
@@ -1286,6 +1377,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
   const [customEnd, setCustomEnd] = useState<string>('');
   const [selectedCustomerForModal, setSelectedCustomerForModal] = useState<Customer | null>(null);
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
+  const [volumeDetailModalOpen, setVolumeDetailModalOpen] = useState(false);
   const [cachedPrediction, setCachedPrediction] = useState<AIAnalysisResult | null>(null);
 
   // State for interactive Payment Analytics Detail Modal
@@ -1337,6 +1429,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
   const [qaError, setQaError] = useState<string>('');
   const [qaInput, setQaInput] = useState('');
   const [chat, setChat] = useState<AIChatMessage[]>([]);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom whenever chat updates
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chat, qaLoading]);
 
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
 
@@ -1437,6 +1536,21 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       unitsMap: Record<string, number>;
     }> = {};
 
+    const productMap = new Map<string, Product>();
+    (products || []).forEach(p => {
+      if (p.name) productMap.set(p.name.toLowerCase().trim(), p);
+    });
+
+    // Granular volume analytics trackers
+    let totalDirectWeightKg = 0;
+    let totalDirectRevenue = 0;
+    let totalPackagedWeightKg = 0;
+    let totalPackagedCount = 0;
+    let totalPackagedRevenue = 0;
+    const packageSizesMap: Record<string, { count: number; weightKg: number; revenue: number }> = {};
+    const productVolumeMap: Record<string, { volume: number; unit: string; revenue: number; orders: number }> = {};
+    const customerVolumeMap: Record<string, { name: string; city?: string; volume: number; unit: string; totalSpent: number; orders: number }> = {};
+
     currentInvoices.forEach(inv => {
       const customer = inv.customerName;
       if (!customerData[customer]) {
@@ -1461,15 +1575,99 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
         inv.items.forEach(item => {
           const amt = Number(item.amount) || 0;
           const rawQty = Number(item.quantity) || 0;
-          const unitName = normalizeUnitName(item.unit, item.packing);
-          let displayQty = rawQty;
+          const rawUnit = (item.unit || '').toLowerCase().trim();
+          const effectivePacking = (item.packing || productMap.get((item.name || '').toLowerCase().trim())?.packing || '').trim();
 
-          if (unitName === 'Gm' && rawQty >= 1000) {
+          let unitName = normalizeUnitName(item.unit, effectivePacking);
+          const isExplicitNonWeight = isNonWeightUnit(rawUnit) || isNonWeightUnit(item.unit) || isNonWeightUnit(unitName);
+
+          let displayQty = rawQty;
+          let weightInKg: number | null = null;
+          let isDirect = false;
+          let isPackaged = false;
+          let packLabel = '';
+
+          if (!isExplicitNonWeight) {
+            const cleanUnit = (rawUnit || '').replace(/[.\-_]/g, ' ').trim();
+            if (['kg', 'kilos', 'kilogram', 'kilograms', 'kgs'].includes(cleanUnit)) {
+              weightInKg = rawQty;
+              isDirect = true;
+            } else if (['gm', 'g', 'gram', 'grams', 'gms'].includes(cleanUnit)) {
+              weightInKg = rawQty / 1000;
+              isDirect = true;
+            } else if (effectivePacking) {
+              const text = effectivePacking.toLowerCase().trim();
+              const match = text.match(/^(\d+(?:\.\d+)?)\s*(kg|kilos|kilogram|kgs|gm|g|gram|grams|gms)\b/);
+              if (match) {
+                const val = parseFloat(match[1]);
+                const packUnit = match[2];
+                const multiplier = ['kg', 'kilos', 'kilogram', 'kgs'].includes(packUnit) ? val : (val / 1000);
+                weightInKg = multiplier * rawQty;
+                isPackaged = true;
+                packLabel = `${val} ${['kg', 'kilos', 'kilogram', 'kgs'].includes(packUnit) ? 'Kg' : 'Gm'}`;
+              }
+            }
+
+            // Only check item name if item unit indicates a packet/bag or is empty
+            // Prevent printing GSM (e.g. 250 gsm paper) from mistakenly being treated as product weight
+            const isGsm = /(?:^|\s)\d+(?:\.\d+)?\s*gsm\b/i.test(item.name || '');
+            if (!isGsm && weightInKg === null && (['pkt', 'packet', 'pouch', 'bag', ''].includes(cleanUnit) || !rawUnit)) {
+              const nameMatch = (item.name || '').toLowerCase().match(/(?:^|\s)(\d+(?:\.\d+)?)\s*(kg|gm|gram|grams|kilos|kgs)\b/);
+              if (nameMatch) {
+                const val = parseFloat(nameMatch[1]);
+                const u = nameMatch[2];
+                const multiplier = ['kg', 'kilos', 'kgs'].includes(u) ? val : (val / 1000);
+                weightInKg = multiplier * rawQty;
+                isPackaged = true;
+                packLabel = `${val} ${['kg', 'kilos', 'kgs'].includes(u) ? 'Kg' : 'Gm'}`;
+              }
+            }
+          }
+
+          if (weightInKg !== null && weightInKg > 0) {
+            unitName = 'Kg';
+            displayQty = Math.round(weightInKg * 1000) / 1000;
+
+            if (isDirect) {
+              totalDirectWeightKg += displayQty;
+              totalDirectRevenue += amt;
+            } else if (isPackaged) {
+              totalPackagedWeightKg += displayQty;
+              totalPackagedCount += rawQty;
+              totalPackagedRevenue += amt;
+              const lbl = packLabel || effectivePacking || 'Packaged';
+              if (!packageSizesMap[lbl]) {
+                packageSizesMap[lbl] = { count: 0, weightKg: 0, revenue: 0 };
+              }
+              packageSizesMap[lbl].count += rawQty;
+              packageSizesMap[lbl].weightKg += displayQty;
+              packageSizesMap[lbl].revenue += amt;
+            }
+          } else if (unitName === 'Gm' && rawQty >= 1000) {
             displayQty = rawQty / 1000;
+            unitName = 'Kg';
+            totalDirectWeightKg += displayQty;
+            totalDirectRevenue += amt;
           }
 
           // Business-wide volume map
           totalBusinessVolumeMap[unitName] = (totalBusinessVolumeMap[unitName] || 0) + displayQty;
+
+          // Product volume tracker
+          if (!productVolumeMap[item.name]) {
+            productVolumeMap[item.name] = { volume: 0, unit: unitName, revenue: 0, orders: 0 };
+          }
+          productVolumeMap[item.name].volume += displayQty;
+          productVolumeMap[item.name].revenue += amt;
+          productVolumeMap[item.name].orders += 1;
+
+          // Customer volume tracker
+          if (!customerVolumeMap[customer]) {
+            customerVolumeMap[customer] = { name: customer, city: inv.customerCity, volume: 0, unit: unitName, totalSpent: 0, orders: 0 };
+          }
+          customerVolumeMap[customer].volume += displayQty;
+          customerVolumeMap[customer].totalSpent += amt;
+          customerVolumeMap[customer].orders += 1;
 
           // Product volume map
           if (!productSales[item.name]) {
@@ -1558,11 +1756,64 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.amount - a.amount);
 
+    // Compute volumeAnalysisData for VolumeDetailModal
+    const volSummary = formatVolumeSummary(totalBusinessVolumeMap);
+    const dominantUnit = volSummary.dominantUnit;
+    const totalVolume = volSummary.dominantQty;
+
+    const packageBreakdown = Object.entries(packageSizesMap)
+      .map(([packageLabel, data]) => ({
+        packageLabel,
+        count: data.count,
+        weightKg: Math.round(data.weightKg * 10) / 10,
+        revenue: Math.round(data.revenue),
+        percentage: totalVolume > 0 ? (data.weightKg / totalVolume) * 100 : 0
+      }))
+      .sort((a, b) => b.weightKg - a.weightKg);
+
+    const productsByVolume = Object.entries(productVolumeMap)
+      .map(([name, data]) => ({
+        name,
+        volume: Math.round(data.volume * 10) / 10,
+        unit: data.unit,
+        revenue: Math.round(data.revenue),
+        orders: data.orders,
+        percentage: totalVolume > 0 ? (data.volume / totalVolume) * 100 : 0
+      }))
+      .sort((a, b) => b.volume - a.volume);
+
+    const customersByVolume = Object.entries(customerVolumeMap)
+      .map(([_, data]) => ({
+        name: data.name,
+        city: data.city,
+        volume: Math.round(data.volume * 10) / 10,
+        unit: data.unit,
+        totalSpent: Math.round(data.totalSpent),
+        orders: data.orders,
+        percentage: totalVolume > 0 ? (data.volume / totalVolume) * 100 : 0
+      }))
+      .sort((a, b) => b.volume - a.volume);
+
+    const volumeAnalysisData: VolumeAnalysisData = {
+      dominantUnit,
+      totalVolume,
+      directVolume: Math.round(totalDirectWeightKg * 10) / 10,
+      directRevenue: Math.round(totalDirectRevenue),
+      packagedVolume: Math.round(totalPackagedWeightKg * 10) / 10,
+      packagedCount: totalPackagedCount,
+      packagedRevenue: Math.round(totalPackagedRevenue),
+      packageBreakdown,
+      productsByVolume,
+      customersByVolume,
+      unitsMap: totalBusinessVolumeMap
+    };
+
     return {
       totalRevenue,
       totalBills,
       avgBillValue,
       totalBusinessVolumeMap,
+      volumeAnalysisData,
       totalCustomers,
       repeatCustomers,
       repeatPurchaseRate,
@@ -1578,7 +1829,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       customerData,
       productSales
     };
-  }, [filteredInvoices]);
+  }, [filteredInvoices, products]);
 
   const chartDataRevenue = useMemo(() => {
     // Determine aggregation based on filter
@@ -1712,7 +1963,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
       const invTotal = Number(inv.total) || 0;
       totalBilled += invTotal;
 
-      const payments = inv.payments || [];
+      const payments = (inv.payments || []).filter(p => !p.isDeleted);
       const invPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
       totalCollected += invPaid;
 
@@ -1885,7 +2136,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
     try {
       // 1. Auto-detect business type
-      const bizDetection = detectBusinessType(dataToAnalyze, stats.totalBusinessVolumeMap || {});
+      const bizDetection = detectBusinessType(dataToAnalyze, stats.totalBusinessVolumeMap || {}, settings);
 
       // 2. Build rich AI data summary
       const aiSummary = buildAIDataSummary(dataToAnalyze, stats, bizDetection.type, isPredictionMode || timeFilter === 'prediction');
@@ -1907,15 +2158,16 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ invoices
 
       const businessContext = `
 This is a "${bizDetection.type}" business (detected with ${bizDetection.confidence} confidence).
-The primary unit of measurement is "${aiSummary.dominantUnit}".
-All volume/quantity insights MUST use this unit ("${aiSummary.dominantUnit}"), NOT Kg or generic units.
-For business KPIs, calculate metrics specific to this business type:
-- Printing & Signage: Revenue per Sq Ft, avg job size in Sq Ft, popular sizes
-- Grocery & Spices: Revenue per Kg, top selling items by weight, restock frequency
-- Textile & Fabrics: Revenue per Meter, avg cut length, popular fabric types
-- Retail & Hardware: Revenue per piece, fast-moving items, slow movers
+Overall business volume sold: "${aiSummary.totalVolume}" (Dominant: "${aiSummary.dominantUnit}").
+NOTE ON PRODUCT UNITS: Products in this business are sold in various units (e.g. ${aiSummary.totalVolume}).
+DO NOT assume a single static unit for everything. When discussing individual products or quantities, always respect each product's actual natural unit (e.g. Kg for weight, Pkt for packets, Pcs for pieces, Sq Ft, Meters, etc.).
+For business KPIs, calculate metrics specific and natural to this business:
+- Printing & Signage: Revenue per Sq Ft, avg job size in Sq Ft, popular media sizes
+- Grocery & Spices: Revenue per Kg/Pkt, top selling items by weight or pack, restock frequency
+- Textile & Fabrics: Revenue per Meter/Roll, avg cut length, popular fabric types
+- Retail & Hardware: Revenue per piece/box, fast-moving items, slow movers
 - Liquids & Beverages: Revenue per Liter, popular volumes
-- General Business: Revenue per unit, order frequency
+- General Business: Revenue per order, average order size, order frequency
 `;
 
       const predictionPrompt = isPrediction ? `
@@ -1961,12 +2213,12 @@ Provide response in JSON with these fields:
 - "customer_behavior_insight": One sentence about buying patterns referencing real customers
 - "customer_segments": One sentence about customer segmentation
 - "high_value_customer_count": Number of customers contributing >50% revenue
-- "top_performing_product_insight": One sentence referencing actual top product with volume in ${aiSummary.dominantUnit}
+- "top_performing_product_insight": One sentence referencing the actual top product with its sales amount and volume in its own natural unit (e.g. Kg, Pkt, Pcs, etc.)
 - "inventory_insights": One sentence about stock/demand trends
 - "low_stock_items": Array of 3 items likely to need restocking
 - "actionable_tips": Array of 5 brief, specific action items for a ${bizDetection.type} business
-- "business_kpi_label": The most relevant KPI name for this business (e.g. "Revenue per ${aiSummary.dominantUnit}")
-- "business_kpi_value": The calculated KPI value as a string (e.g. "₹45.2/${aiSummary.dominantUnit}")
+- "business_kpi_label": The most relevant KPI name for this business (e.g. "Revenue per ${aiSummary.dominantUnit}", "AOV", or volume-based KPI)
+- "business_kpi_value": The calculated KPI value as a string (e.g. "₹45.2/${aiSummary.dominantUnit}" or "₹${Math.round(aiSummary.avgBillValue)}")
 - "predicted_top_products": Array of 3-5 product names expected to sell well next month
 - "churn_risk_customers": Array of 2-3 customer names who may be at risk of churning
 - "confidence_level": "High", "Medium", or "Low" based on data quality/quantity
@@ -2101,18 +2353,14 @@ Provide response in JSON with these fields:
       // Track AI usage for admin
       onAiRequest?.();
 
-      const recentInvoices = invoices.slice(-200).map(inv => ({
+      // Compact representation of recent invoices (latest 40 instead of 200, without bloated item trees)
+      const recentInvoices = invoices.slice(-40).map(inv => ({
         date: inv.date,
         total: Number(inv.total) || 0,
         customer: inv.customerName,
         city: inv.customerCity,
-        items: (inv.items || []).map(i => ({
-          name: i.name,
-          qty: i.quantity,
-          unit: i.unit,
-          amount: Number(i.amount) || 0,
-          packing: i.packing || ''
-        }))
+        itemCount: (inv.items || []).length,
+        itemsSummary: (inv.items || []).slice(0, 3).map(i => `${i.name} (x${i.quantity || 1})`).join(', ')
       }));
 
       const metricsContext = {
@@ -2122,13 +2370,13 @@ Provide response in JSON with these fields:
         repeat_purchase_rate_percent: stats.repeatPurchaseRate,
         avg_ltv: stats.avgLTV,
         total_customers: stats.totalCustomers,
-        total_kg_sold: ((stats as any).totalWeightGramsSold || 0) / 1000,
-        top_products_by_revenue: stats.chartDataProducts,
-        top_customers_by_revenue: stats.chartDataCustomers,
-        daily_revenue_trend: stats.chartDataRevenueAll.slice(-14)
+        total_volume_sold: formatVolumeSummary(stats.totalBusinessVolumeMap).text || '0 Units',
+        top_products_by_revenue: stats.chartDataProducts.slice(0, 10),
+        top_customers_by_revenue: stats.chartDataCustomers.slice(0, 10),
+        daily_revenue_trend: stats.chartDataRevenueAll.slice(-20)
       };
 
-      const chatHistory = chat.slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
+      const chatHistory = chat.slice(-4).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
 
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -2141,27 +2389,29 @@ Provide response in JSON with these fields:
       - Otherwise answer in English.
 
       CHART GENERATION MANDATE:
-      - ALWAYS return populated chart objects in the "charts" array whenever user asks for ANY chart, graph, plot, trend, visual, breakdown, top products, top customers, or mentions keywords like "chart", "graph", "plot", "show chart", "build chart", "ચાર્ટ", "ગ્રાફ", "વેચાણ".
-      - IMPORTANT: "charts" must contain AT MOST 1 or 2 high-level chart specification objects total (e.g. 1 "bar" chart for revenue trend, 1 "pie" chart for products). DO NOT return individual data rows as separate chart objects!
+      - ALWAYS return populated chart objects in the "charts" array whenever user asks for ANY chart, graph, plot, trend, visual, breakdown, top products, top customers, or mentions keywords like "chart", "graph", "plot", "show chart", "build chart", "ચાર્ટ", "ગ્રાફ", "વેચાણ", "revenue by date".
+      - IMPORTANT: Keep chart data concise! Limit data points to at most 15-20 points (e.g. top 10 products or the last 15-20 dates from daily_revenue_trend). DO NOT generate hundreds of data points.
+      - "charts" must contain AT MOST 1 or 2 high-level chart specification objects. DO NOT return individual data rows as separate chart objects!
 
       Available chart types:
       - bar: dateStr + revenue
-      - pie: name + value (+ optional weight grams)
+      - pie: name + value (+ optional weight)
       - progress: list of bars with label/value/meta
 
       Business data context (aggregates):
       ${JSON.stringify(metricsContext)}
 
-      Recent bills (latest first; up to 200):
+      Recent bills (latest 40):
       ${JSON.stringify(recentInvoices)}
 
-      Chat history (latest first):
+      Chat history:
       ${chatHistory}
 
       User question:
       ${question}
         `,
         config: {
+          maxOutputTokens: 2500,
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -2210,7 +2460,21 @@ Provide response in JSON with these fields:
         }
       });
 
-      const parsed: AIQAResult = response.text ? JSON.parse(response.text) : { language: 'en', answer: 'No response.' };
+      let parsed: AIQAResult = { language: 'en', answer: 'No response.' };
+      if (response.text) {
+        try {
+          parsed = JSON.parse(response.text);
+        } catch (parseErr) {
+          console.warn('Direct JSON parse failed, extracting answer & using fallback charts:', parseErr);
+          const answerMatch = response.text.match(/"answer"\s*:\s*"((?:[^"\\]|\\.)*)/s);
+          if (answerMatch && answerMatch[1]) {
+            parsed.answer = answerMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+          } else {
+            parsed.answer = 'Here is the revenue breakdown based on your billing history.';
+          }
+        }
+      }
+
       let rawCharts = parsed.charts || [];
 
       // Filter and sanitize charts: keep only objects with valid array data/bars
@@ -2226,7 +2490,7 @@ Provide response in JSON with these fields:
       }).slice(0, 2);
 
       // Check if user specifically requested a chart/graph or if Gemini returned no valid charts
-      const isChartRequest = /chart|graph|plot|visualize|breakdown|trend|compare|show|ચાર્ટ|ગ્રાફ|બતાવો/.test(question.toLowerCase());
+      const isChartRequest = /chart|graph|plot|visualize|breakdown|trend|compare|show|revenue|date|sales|ચાર્ટ|ગ્રાફ|બતાવો/.test(question.toLowerCase());
       if (isChartRequest && finalCharts.length === 0) {
         finalCharts = generateFallbackCharts(question);
       }
@@ -2441,7 +2705,11 @@ Provide response in JSON with these fields:
                 <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Customer LTV</div>
               </div>
 
-              <div className="bg-gradient-to-br from-amber-50 to-yellow-50 p-3 sm:p-4 rounded-xl shadow-sm border border-amber-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+              <div
+                onClick={() => setVolumeDetailModalOpen(true)}
+                className="bg-gradient-to-br from-amber-50 to-yellow-50 p-3 sm:p-4 rounded-xl shadow-sm border border-amber-200 hover:border-amber-400 hover:shadow-md transition-all min-w-0 flex flex-col justify-between cursor-pointer group relative"
+                title="Click to view detailed volume breakdown, package sizes, top products & top customers"
+              >
                 {(() => {
                   const summary = formatVolumeSummary(stats.totalBusinessVolumeMap);
                   const title = summary.dominantUnit ? `Total ${summary.dominantUnit} Sold` : 'Total Volume Sold';
@@ -2453,12 +2721,17 @@ Provide response in JSON with these fields:
                   return (
                     <>
                       <div className="flex justify-between items-start mb-2">
-                        <div className="p-1.5 bg-white rounded-lg text-amber-600 shadow-sm text-sm flex items-center justify-center">
+                        <div className="p-1.5 bg-white rounded-lg text-amber-600 shadow-sm text-sm flex items-center justify-center group-hover:scale-110 transition-transform">
                           {iconText}
                         </div>
-                        <span className="text-[10px] sm:text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full truncate max-w-[80px]">
-                          {summary.dominantUnit || 'Volume'}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] sm:text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full truncate max-w-[80px]">
+                            {summary.dominantUnit || 'Volume'}
+                          </span>
+                          <span className="text-[10px] font-extrabold text-amber-700 bg-white/90 group-hover:bg-amber-600 group-hover:text-white px-1.5 py-0.5 rounded-md transition-colors shadow-xs flex items-center gap-0.5">
+                            Details <ChevronRight size={10} />
+                          </span>
+                        </div>
                       </div>
                       <div className="flex items-baseline gap-1 flex-wrap min-w-0" title={summary.text}>
                         <span className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 leading-tight">
@@ -2469,7 +2742,7 @@ Provide response in JSON with these fields:
                         </span>
                       </div>
                       <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
-                        <span className="truncate">{title}</span>
+                        <span className="truncate group-hover:text-amber-800 transition-colors font-semibold">{title}</span>
                         {summary.secondaryText && (
                           <span className="text-[10px] font-bold text-amber-800 bg-amber-200/60 px-1.5 py-0.5 rounded truncate max-w-full" title={summary.text}>
                             {summary.secondaryText}
@@ -2704,8 +2977,8 @@ Provide response in JSON with these fields:
                         .map(([name, data]) => {
                           const d = data as any;
                           return typeof d === 'object' && d !== null
-                            ? { name, quantity: d.quantity || 0, amount: d.amount || 0, unitsMap: d.unitsMap || {} }
-                            : { name, quantity: 0, amount: 0, unitsMap: {} };
+                            ? { name, quantity: d.quantity || 0, amount: d.amount || 0, unitsMap: d.unitsMap || {}, dominantUnit: d.dominantUnit }
+                            : { name, quantity: 0, amount: 0, unitsMap: {}, dominantUnit: undefined };
                         })
                         .sort((a, b) => b.amount - a.amount)
                         .slice(0, 3);
@@ -2737,7 +3010,7 @@ Provide response in JSON with these fields:
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                               {topItems.map((item, i) => {
                                 const itemVol = formatVolumeSummary(item.unitsMap);
-                                const itemIcon = getVolumeIcon(itemVol.dominantUnit);
+                                const itemIcon = getVolumeIcon(itemVol.dominantUnit || item.dominantUnit || '');
 
                                 return (
                                   <div key={i} className="bg-slate-50 p-2 rounded">
@@ -2749,7 +3022,7 @@ Provide response in JSON with these fields:
                                       {itemVol.text ? (
                                         <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">{itemIcon} {itemVol.text}</div>
                                       ) : (
-                                        <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">📦 {item.quantity} qty</div>
+                                        <div className="text-[11px] sm:text-xs text-slate-600 whitespace-nowrap">{itemIcon} {item.quantity} {item.dominantUnit || 'Units'}</div>
                                       )}
                                     </div>
                                   </div>
@@ -3427,7 +3700,16 @@ Provide response in JSON with these fields:
               <div className="mt-5 md:mt-6 bg-white/5 border border-white/10 rounded-xl p-3 md:p-4">
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div className="font-bold text-sm md:text-base">Ask about your bills</div>
-                  <div className="text-[10px] md:text-xs text-slate-300">Gujarati / English supported</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10px] md:text-xs text-slate-300">Gujarati / English supported</div>
+                    <button
+                      onClick={() => setChatExpanded(true)}
+                      title="Expand chat"
+                      className="text-slate-300 hover:text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition-colors cursor-pointer"
+                    >
+                      <Maximize2 size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {qaError && (
@@ -3440,7 +3722,7 @@ Provide response in JSON with these fields:
                   <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
                     {chat.length === 0 ? (
                       <div className="text-slate-300 text-xs">
-                        Try: “મારે સૌથી વધારે કોણ ખરીદે છે?” or “Show chart of revenue by date”
+                        દા.ત.: "મારા સૌથી વધારે ખર્ચ કરનાર ગ્રાહક કોણ છે?" અથવા "વેચાણનો ચાર્ટ બતાવો"
                       </div>
                     ) : (
                       chat.map((m, idx) => (
@@ -3571,6 +3853,13 @@ Provide response in JSON with these fields:
                       ))
                     )}
                   </div>
+                  {qaLoading && (
+                    <div className="rounded-lg p-2 text-xs bg-slate-950/40 text-slate-300 flex items-center gap-2 mt-2">
+                      <div className="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
+                      Thinking...
+                    </div>
+                  )}
+                  <div ref={chatBottomRef} />
 
                   {/* Quick Chart Suggestion Pills - Wrapped for Mobile */}
                   <div className="flex flex-wrap items-center gap-1.5 py-1">
@@ -3625,6 +3914,112 @@ Provide response in JSON with these fields:
                   </div>
                 </div>
               </div>
+
+              {/* ── Expanded Chat Modal ─────────────────────────────────────── */}
+              {chatExpanded && (
+                <div
+                  className="fixed inset-0 z-[9999] flex flex-col"
+                  style={{ background: 'rgba(2,6,23,0.97)' }}
+                >
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10 bg-white/5 shrink-0">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="text-yellow-400" size={18} />
+                      <span className="font-bold text-white text-base">Ask about your bills</span>
+                      <span className="text-xs text-slate-400 ml-2">Gujarati / English supported</span>
+                    </div>
+                    <button
+                      onClick={() => setChatExpanded(false)}
+                      className="text-slate-400 hover:text-white bg-white/10 hover:bg-white/20 p-2 rounded-lg transition-colors cursor-pointer"
+                      title="Close"
+                    >
+                      <Minimize2 size={16} />
+                    </button>
+                  </div>
+
+                  {/* Chat Messages — full scroll area */}
+                  <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                    {chat.length === 0 && !qaLoading && (
+                      <div className="text-slate-400 text-sm text-center mt-8">
+                        Try: "મારા સૌથી વધારે ખર્ચ કરનાર ગ્રાહક?" or "Show chart of revenue by date"
+                      </div>
+                    )}
+                    {chat.map((m, idx) => (
+                      <div key={idx} className={`rounded-xl p-3 text-sm leading-relaxed ${
+                        m.role === 'user'
+                          ? 'bg-white/10 text-white ml-8'
+                          : 'bg-slate-900 text-slate-100 mr-8 border border-white/10'
+                      }`}>
+                        <div className="text-[11px] uppercase tracking-wide text-slate-400 mb-1.5 font-bold">
+                          {m.role === 'user' ? '🧑 You' : '🤖 AI'}
+                        </div>
+                        <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                        {m.role === 'assistant' && m.charts && m.charts.length > 0 && (
+                          <div className="mt-3 space-y-4">
+                            {m.charts.map((c: any, ci: number) => {
+                              const typeStr = (c.type || '').toLowerCase();
+                              const isPie = typeStr.includes('pie') || typeStr.includes('donut');
+                              return (
+                                <div key={ci} className="bg-white rounded-xl p-4 text-slate-900 shadow-sm border border-slate-200">
+                                  <div className="font-bold text-sm text-slate-700 mb-3">{c.title || 'Chart'}</div>
+                                  <div style={{ height: '280px' }}>
+                                    {isPie
+                                      ? <SimplePieChart data={Array.isArray(c.data) ? c.data : []} />
+                                      : <SimpleBarChart data={Array.isArray(c.data) ? c.data : Array.isArray(c.bars) ? c.bars : []} />}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {qaLoading && (
+                      <div className="rounded-xl p-3 text-sm bg-slate-900 border border-white/10 text-slate-300 flex items-center gap-2 mr-8">
+                        <div className="w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin" />
+                        Thinking...
+                      </div>
+                    )}
+                    <div ref={chatBottomRef} />
+                  </div>
+
+                  {/* Quick Suggestion Pills */}
+                  <div className="px-5 py-2 flex flex-wrap gap-2 border-t border-white/10 bg-white/5 shrink-0">
+                    <span className="text-[10px] font-bold uppercase text-amber-400 flex items-center gap-1 mr-1"><Sparkles size={11} /> Quick:</span>
+                    {['Show chart of revenue by date','Show pie chart of top products','Show chart of top customers by spending'].map(q => (
+                      <button key={q} type="button" onClick={() => { askBillsQuestion(q); }}
+                        className="bg-white/10 hover:bg-white/20 text-white text-xs font-medium px-3 py-1 rounded-full border border-white/20 transition-colors cursor-pointer">
+                        {q.includes('revenue') ? '📊' : q.includes('customers') ? '🏆' : '🍩'} {q.replace('Show chart of ','').replace('Show pie chart of ','')}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Input Row */}
+                  <div className="px-5 py-4 border-t border-white/10 bg-black/30 shrink-0 flex gap-3">
+                    {qaError && (
+                      <div className="absolute bottom-24 left-5 right-5 bg-red-500/20 border border-red-500/40 p-2 rounded-lg text-red-100 text-xs break-words">
+                        {qaError}
+                      </div>
+                    )}
+                    <textarea
+                      value={qaInput}
+                      onChange={e => setQaInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askBillsQuestion(); } }}
+                      placeholder="Ask anything… (Enter to send, Shift+Enter for newline)"
+                      className="flex-1 bg-white/10 border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-yellow-400/60 resize-none min-h-[52px] max-h-32"
+                      rows={2}
+                    />
+                    <button
+                      onClick={() => askBillsQuestion()}
+                      disabled={qaLoading}
+                      className="bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-bold rounded-xl px-5 py-2 text-sm disabled:opacity-70 self-end cursor-pointer transition-colors"
+                    >
+                      {qaLoading ? 'Thinking…' : 'Ask'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -3638,6 +4033,7 @@ Provide response in JSON with these fields:
         <CustomerSpendingModal
           customer={selectedCustomerForModal}
           invoices={invoices}
+          settings={settings}
           onClose={() => setSelectedCustomerForModal(null)}
         />
       )}
@@ -3648,6 +4044,7 @@ Provide response in JSON with these fields:
           product={selectedProductForModal}
           invoices={invoices}
           customers={customers}
+          settings={settings}
           onClose={() => setSelectedProductForModal(null)}
         />
       )}
@@ -3808,6 +4205,30 @@ Provide response in JSON with these fields:
             </div>
           </div>
         </div>
+      )}
+
+      {/* Volume & Weight Detail Modal */}
+      {volumeDetailModalOpen && stats.volumeAnalysisData && (
+        <VolumeDetailModal
+          isOpen={volumeDetailModalOpen}
+          onClose={() => setVolumeDetailModalOpen(false)}
+          timeFilterLabel={
+            timeFilter === 'month'
+              ? 'This Month'
+              : timeFilter === 'last-month'
+              ? 'Last Month'
+              : timeFilter === 'year'
+              ? 'This Year'
+              : timeFilter === 'last-year'
+              ? 'Last Year'
+              : timeFilter === 'all'
+              ? 'All Time'
+              : timeFilter === 'custom'
+              ? (customStart && customEnd ? `${customStart} to ${customEnd}` : 'Custom Date Range')
+              : 'Selected Period'
+          }
+          data={stats.volumeAnalysisData}
+        />
       )}
     </div>
   );

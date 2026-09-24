@@ -4,8 +4,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Billing System</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>Universal Billing System</title>
+  <script src="./tailwind.js"></script>
+  <script>if (!window.tailwind) { document.write('<script src="https://cdn.tailwindcss.com"><\/script>'); }</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -19,18 +20,22 @@
         margin: 0;
       }
 
+      *, *::before, *::after {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
       html,
       body {
         margin: 0 !important;
         padding: 0 !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
         width: 100% !important;
         height: auto !important;
         min-height: 0 !important;
         max-height: none !important;
         overflow: visible !important;
-        background: white !important;
+        background: #ffffff !important;
+        background-color: #ffffff !important;
       }
 
       .no-print {
@@ -39,20 +44,16 @@
         height: 0 !important;
       }
 
-      .print-only {
-        display: block !important;
-        width: 100%;
-        visibility: visible !important;
-      }
-
-      /* Hide everything except the print container */
-      body>*:not(.print-only-container) {
+      /* Hide everything except the print portal / print container */
+      body > *:not(#print-portal-root):not(.print-only-container):not(#electron-print-portal) {
         display: none !important;
         visibility: hidden !important;
         height: 0 !important;
         overflow: hidden !important;
       }
 
+      #print-portal-root,
+      #electron-print-portal,
       .print-only-container {
         display: block !important;
         visibility: visible !important;
@@ -60,22 +61,27 @@
         width: 100% !important;
         height: auto !important;
         min-height: 0 !important;
-        background: white !important;
+        background: #ffffff !important;
+        background-color: #ffffff !important;
         z-index: 99999 !important;
         overflow: visible !important;
         page-break-after: avoid !important;
       }
 
+      #print-portal-root *,
+      #electron-print-portal *,
       .print-only-container * {
         visibility: visible !important;
       }
 
+      .print-bill-target,
       .print-container {
         width: 100% !important;
         max-width: 794px !important;
         margin: 0 auto !important;
         padding: 0 !important;
-        background: white !important;
+        background: #ffffff !important;
+        background-color: #ffffff !important;
         transform: none !important;
         box-shadow: none !important;
         visibility: visible !important;
@@ -126,6 +132,34 @@
       width: 0;
       height: 0;
     }
+
+    /* ── PDF Print Mode (Electron printToPDF) ─────────────────────────────── */
+    /* When body has this class, hide the entire app and show only the target invoice */
+    body.pdf-print-mode #root {
+      visibility: hidden !important;
+      overflow: hidden !important;
+    }
+    body.pdf-print-mode * {
+      visibility: hidden !important;
+    }
+    /* Invoice generator hidden capture element */
+    body.pdf-print-mode #invoice-capture-hidden,
+    body.pdf-print-mode #invoice-capture-hidden * {
+      visibility: visible !important;
+    }
+    /* Invoice history view (when printing from bill history) */
+    body.pdf-print-mode #history-view,
+    body.pdf-print-mode #history-view * {
+      visibility: visible !important;
+    }
+    body.pdf-print-mode {
+      background: white !important;
+      overflow: hidden !important;
+    }
+
+
+
+
   </style>
   <script type="importmap">
 {

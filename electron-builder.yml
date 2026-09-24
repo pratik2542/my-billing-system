@@ -1,0 +1,64 @@
+appId: "com.universal.billing-system"
+productName: "Universal Billing System"
+copyright: "Copyright © 2025"
+
+# Disable code signing — no certificate available
+forceCodeSigning: false
+
+# ─── Directories ──────────────────────────────────────────────────────────────
+directories:
+  output: "release"
+  buildResources: "build-resources"
+
+# ─── Files to include in the package ─────────────────────────────────────────
+files:
+  - dist/**/*
+  - electron/**/*.js
+  - electron/package.json
+  - electron/migrations/**
+  - "!electron/**/*.ts"
+  - package.json
+  - node_modules/**/*
+  - "!node_modules/**/node_gyp_bins"
+  - "!node_modules/**/{CHANGELOG.md,README.md,readme.md,test,tests,__tests__,*.test.js,*.spec.js,docs}"
+
+# ─── Extra resources bundled inside the app (accessible via process.resourcesPath)
+extraResources:
+  - from: "electron/migrations"
+    to: "electron/migrations"
+
+# ─── ASAR packing ─────────────────────────────────────────────────────────────
+# Exclude better-sqlite3 from asar — native .node files can't be inside asar
+asar: true
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
+  - "node_modules/bindings/**"
+  - "node_modules/file-uri-to-path/**"
+
+# ─── Windows-specific ─────────────────────────────────────────────────────────
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build-resources/icon.ico
+
+# ─── NSIS Installer ───────────────────────────────────────────────────────────
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build-resources/icon.ico
+  uninstallerIcon: build-resources/icon.ico
+  installerHeaderIcon: build-resources/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "Universal Billing System"
+  runAfterFinish: true
+  include: build-resources/installer.nsh
+
+# ─── Hooks ────────────────────────────────────────────────────────────────────
+afterPack: build-resources/afterPack.cjs
+beforeBuild: build-resources/beforeBuild.cjs
+
+# ─── Auto Updater (disabled — offline use) ────────────────────────────────────
+# publish: null  # Uncomment to enable auto-update publishing

@@ -22,6 +22,7 @@ import {
   Printer
 } from 'lucide-react';
 import { InvoiceTemplate } from './InvoiceTemplate';
+import { printInvoiceElement } from '../printHelper';
 
 interface CustomerSpendingModalProps {
   customer: Customer;
@@ -926,6 +927,11 @@ export const CustomerSpendingModal: React.FC<CustomerSpendingModalProps> = ({
     };
   }, [viewingInvoice]);
 
+  const handlePrint = useCallback(() => {
+    if (!viewingInvoice) return;
+    printInvoiceElement(`cust-inv-${viewingInvoice.id}`, viewingInvoice.id, viewingInvoice.customerName);
+  }, [viewingInvoice]);
+
   // Filter invoices for this customer (case-insensitive name match)
   const customerInvoices = useMemo(() => {
     const custNameLower = customer.name.trim().toLowerCase();
@@ -1690,7 +1696,7 @@ export const CustomerSpendingModal: React.FC<CustomerSpendingModalProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={handlePrint}
                   className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                 >
                   <Printer size={14} /> Print
@@ -1721,11 +1727,18 @@ export const CustomerSpendingModal: React.FC<CustomerSpendingModalProps> = ({
                   date={viewingInvoice.date}
                   customerName={viewingInvoice.customerName}
                   customerCity={viewingInvoice.customerCity}
-                  customerMobile={viewingInvoice.customerMobile}
+                  customerMobile={viewingInvoice.customerMobile || customer.mobile}
                   items={viewingInvoice.items}
                   settings={settings || DEFAULT_BUSINESS_SETTINGS}
                   gstRate={viewingInvoice.gstRate}
                   payments={viewingInvoice.payments}
+                  subtotal={viewingInvoice.subtotal}
+                  gstAmount={viewingInvoice.gstAmount}
+                  showUnitInItemsTable={viewingInvoice.showUnitInItemsTable}
+                  customTotalQtyText={viewingInvoice.customTotalQtyText}
+                  billedBy={viewingInvoice.billedBy || viewingInvoice.createdByName}
+                  createdByName={viewingInvoice.createdByName}
+                  isDeleted={viewingInvoice.isDeleted}
                 />
               </div>
             </div>

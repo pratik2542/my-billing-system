@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Invoice, PaymentEntry, PaymentMode } from '../types';
 import { X, PlusCircle, Trash2, IndianRupee, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { restoreAppFocus } from '../electron-api';
 
 interface PaymentTrackerModalProps {
   invoice: Invoice;
@@ -40,7 +41,8 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
   onDeletePayment,
 }) => {
   const payments = invoice.payments || [];
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const activePayments = payments.filter(p => !p.isDeleted);
+  const totalPaid = activePayments.reduce((sum, p) => sum + p.amount, 0);
   const remaining = invoice.total - totalPaid;
   const paidPercent = invoice.total > 0 ? Math.min((totalPaid / invoice.total) * 100, 100) : 0;
 
@@ -57,7 +59,18 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
+  const amountInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (remaining > 0.01) {
+      const timer = setTimeout(() => {
+        amountInputRef.current?.focus();
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [remaining]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,6 +94,8 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
         note: note.trim(),
       };
       await onAddPayment(invoice.id, entry);
+      setAmount('');
+      setNote('');
     } catch (e: any) {
       console.error('Failed to save payment:', e);
       if (e?.code === 'permission-denied' || (e?.message && e.message.includes('permissions'))) {
@@ -94,18 +109,26 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
   };
 
   const handleDelete = async (paymentId: string) => {
-    if (!window.confirm('Delete this payment entry?')) return;
     setDeletingId(paymentId);
+    setConfirmDeleteId(null);
     try {
       await onDeletePayment(invoice.id, paymentId);
+      await restoreAppFocus().catch(() => {});
+      if (typeof window !== 'undefined') {
+        window.focus();
+        setTimeout(() => {
+          window.focus();
+          amountInputRef.current?.focus();
+        }, 50);
+      }
     } finally {
       setDeletingId(null);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-0 md:p-4 backdrop-blur-sm">
-      <div className="bg-white w-full md:max-w-xl h-full md:h-auto md:max-h-[90vh] md:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-[99999] bg-black/60 flex items-center justify-center p-0 md:p-4" style={{ pointerEvents: 'auto' }}>
+      <div className="bg-white text-slate-900 w-full md:max-w-xl h-full md:h-auto md:max-h-[90vh] md:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
 
         {/* Header */}
         <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-5 flex items-start justify-between shrink-0">
@@ -177,15 +200,17 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
                     <div className="relative">
                       <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">Rs.</span>
                       <input
+                        ref={amountInputRef}
+                        id="payment-tracker-amount-input"
                         type="number"
-                        min="1"
+                        min="0.01"
                         step="0.01"
-                        max={remaining}
                         required
                         value={amount}
                         onChange={e => setAmount(e.target.value)}
                         placeholder="0.00"
                         className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 outline-none"
+                        style={{ color: '#0f172a', backgroundColor: '#ffffff' }}
                       />
                     </div>
                   </div>
@@ -273,35 +298,83 @@ export const PaymentTrackerModal: React.FC<PaymentTrackerModalProps> = ({
               </div>
             ) : (
               <div className="space-y-2">
-                {[...payments].reverse().map(p => (
-                  <div
-                    key={p.id}
-                    className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl p-3 shadow-sm"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${MODE_COLORS[p.mode]}`}>
-                          {p.mode}
-                        </span>
-                        <span className="text-xs text-slate-400">{p.date}</span>
-                        {p.note && (
-                          <span className="text-xs text-slate-500 italic truncate max-w-[120px]">{p.note}</span>
+                {[...payments].reverse().map(p => {
+                  const isDel = !!p.isDeleted;
+                  return (
+                    <div
+                      key={p.id}
+                      className={`flex items-center gap-3 border rounded-xl p-3 shadow-xs ${
+                        isDel ? 'bg-rose-50/60 border-rose-200 opacity-80' : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {isDel && (
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-300">
+                              VOID / DELETED
+                            </span>
+                          )}
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${MODE_COLORS[p.mode]}`}>
+                            {p.mode}
+                          </span>
+                          <span className="text-xs text-slate-400">{p.date}</span>
+                          {p.note && (
+                            <span className="text-xs text-slate-500 italic truncate max-w-[120px]">{p.note}</span>
+                          )}
+                        </div>
+                        {isDel && (
+                          <div className="text-[11px] text-rose-600 font-medium mt-1 flex items-center gap-1">
+                            <span>Deleted by <strong>{p.deletedByName || 'Admin'}</strong></span>
+                            {p.deletedAt && (
+                              <span className="text-slate-400">
+                                • {new Date(p.deletedAt).toLocaleDateString()} {new Date(p.deletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
+                      <div className="text-right shrink-0">
+                        <div className={`text-sm ${isDel ? 'line-through text-slate-400 font-semibold' : 'font-bold text-slate-800'}`}>
+                          Rs.{p.amount.toLocaleString('en-IN')}
+                        </div>
+                      </div>
+                      {isDel ? (
+                        <span className="text-xs font-semibold text-rose-500 italic px-2 py-1 bg-rose-100/70 rounded-md shrink-0">
+                          Deleted
+                        </span>
+                      ) : confirmDeleteId === p.id ? (
+                        <div className="flex items-center gap-1 shrink-0 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+                          <span className="text-[11px] font-bold text-red-700">Delete?</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(p.id)}
+                            disabled={deletingId === p.id}
+                            className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-bold transition-colors disabled:opacity-50"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[11px] font-semibold transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(p.id)}
+                          disabled={deletingId === p.id}
+                          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0 disabled:opacity-40"
+                          title="Delete this payment"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
-                    <div className="text-right shrink-0">
-                      <div className="font-bold text-slate-800 text-sm">Rs.{p.amount.toLocaleString('en-IN')}</div>
-                    </div>
-                    <button
-                      onClick={() => handleDelete(p.id)}
-                      disabled={deletingId === p.id}
-                      className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors shrink-0 disabled:opacity-40"
-                      title="Delete this payment"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

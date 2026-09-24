@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Invoice, PaymentEntry, PaymentMode, Customer, BusinessSettings } from '../types';
 import { InvoiceTemplate } from './InvoiceTemplate';
+import { printInvoiceElement } from '../printHelper';
+import { openWhatsApp, openExternal } from '../electron-api';
 import {
   Wallet,
   IndianRupee,
@@ -77,9 +79,11 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
   const [activeTab, setActiveTab] = useState<'receivables' | 'transactions' | 'customers'>('receivables');
   const [statusFilter, setStatusFilter] = useState<'all' | 'unpaid' | 'partial' | 'paid' | 'overdue'>('all');
   const [modeFilter, setModeFilter] = useState<string>('all');
+  const [transactionStatusFilter, setTransactionStatusFilter] = useState<'all' | 'active' | 'deleted'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'highest_pending' | 'highest_total'>('highest_pending');
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Phone lookup map from customers directory
   const customerPhoneMap = useMemo(() => {
@@ -124,7 +128,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
 
     invoices.forEach(inv => {
       totalBilled += inv.total;
-      const invPayments = inv.payments || [];
+      const invPayments = (inv.payments || []).filter(p => !p.isDeleted);
       const invPaid = invPayments.reduce((sum, p) => sum + p.amount, 0);
       const invRemaining = inv.total - invPaid;
       totalCollected += invPaid;
@@ -213,7 +217,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
     invoices.forEach(inv => {
       const key = inv.customerName?.trim().toLowerCase() || 'unknown';
       const phone = getPhoneForInvoice(inv);
-      const invPaid = (inv.payments || []).reduce((s, p) => s + p.amount, 0);
+      const invPaid = (inv.payments || []).filter(p => !p.isDeleted).reduce((s, p) => s + p.amount, 0);
       const invPending = Math.max(0, inv.total - invPaid);
 
       if (!map.has(key)) {
@@ -251,7 +255,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
     const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
     return invoices.filter(inv => {
-      const paid = (inv.payments || []).reduce((s, p) => s + p.amount, 0);
+      const paid = (inv.payments || []).filter(p => !p.isDeleted).reduce((s, p) => s + p.amount, 0);
       const remaining = inv.total - paid;
       const isPaid = paid >= inv.total && inv.total > 0;
       const isPartial = paid > 0 && remaining > 0;
@@ -280,8 +284,8 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
 
       return true;
     }).sort((a, b) => {
-      const paidA = (a.payments || []).reduce((s, p) => s + p.amount, 0);
-      const paidB = (b.payments || []).reduce((s, p) => s + p.amount, 0);
+      const paidA = (a.payments || []).filter(p => !p.isDeleted).reduce((s, p) => s + p.amount, 0);
+      const paidB = (b.payments || []).filter(p => !p.isDeleted).reduce((s, p) => s + p.amount, 0);
       const pendA = Math.max(0, a.total - paidA);
       const pendB = Math.max(0, b.total - paidB);
 
@@ -298,6 +302,13 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
     const cleanDigits = searchTerm.replace(/[^0-9]/g, '');
 
     return allTransactions.filter(item => {
+      if (transactionStatusFilter === 'active' && item.payment.isDeleted) {
+        return false;
+      }
+      if (transactionStatusFilter === 'deleted' && !item.payment.isDeleted) {
+        return false;
+      }
+
       if (modeFilter !== 'all' && item.payment.mode !== modeFilter) {
         return false;
       }
@@ -315,10 +326,10 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
 
       return true;
     });
-  }, [allTransactions, modeFilter, searchTerm]);
+  }, [allTransactions, modeFilter, searchTerm, transactionStatusFilter]);
 
   // Send WhatsApp Payment Reminder
-  const handleSendWhatsAppReminder = (inv: Invoice) => {
+  const handleSendWhatsAppReminder = async (inv: Invoice) => {
     const phone = getPhoneForInvoice(inv);
     if (!phone) {
       alert(`No mobile number recorded for ${inv.customerName}. Please update the customer profile or bill with their phone number.`);
@@ -327,7 +338,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
 
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-    const paid = (inv.payments || []).reduce((s, p) => s + p.amount, 0);
+    const paid = (inv.payments || []).filter(p => !p.isDeleted).reduce((s, p) => s + p.amount, 0);
     const balance = Math.max(0, inv.total - paid);
 
     let message = `*PAYMENT REMINDER*\n`;
@@ -352,12 +363,19 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
 
     message += `\nThank you for your business! 🙏`;
 
-    const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
-    window.open(url, '_blank');
+    const res = await openWhatsApp(formattedPhone, message);
+    if (res?.notInstalled) {
+      const wantWeb = window.confirm(
+        `⚠️ WhatsApp Desktop App is not installed on this PC.\n\nWould you like to open WhatsApp Web in your browser instead?`
+      );
+      if (wantWeb) {
+        await openExternal(`https://web.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(message)}`);
+      }
+    }
   };
 
   // Send WhatsApp Total Balance Reminder across all invoices
-  const handleSendCustomerBalanceReminder = (customer: typeof customerBalances[0]) => {
+  const handleSendCustomerBalanceReminder = async (customer: typeof customerBalances[0]) => {
     if (!customer.customerMobile) {
       alert(`No mobile number recorded for ${customer.customerName}.`);
       return;
@@ -386,8 +404,15 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
 
     message += `\nPlease clear the pending dues at your earliest convenience. Thank you! 🙏`;
 
-    const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
-    window.open(url, '_blank');
+    const res = await openWhatsApp(formattedPhone, message);
+    if (res?.notInstalled) {
+      const wantWeb = window.confirm(
+        `⚠️ WhatsApp Desktop App is not installed on this PC.\n\nWould you like to open WhatsApp Web in your browser instead?`
+      );
+      if (wantWeb) {
+        await openExternal(`https://web.whatsapp.com/send?phone=${formattedPhone}&text=${encodeURIComponent(message)}`);
+      }
+    }
   };
 
   // Export Transactions Ledger to CSV
@@ -397,7 +422,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
       return;
     }
 
-    const headers = ['Date', 'Invoice ID', 'Customer Name', 'City', 'Mobile', 'Payment Mode', 'Amount (INR)', 'Note'];
+    const headers = ['Date', 'Invoice ID', 'Customer Name', 'City', 'Mobile', 'Payment Mode', 'Amount (INR)', 'Status', 'Deleted By', 'Deleted Date', 'Note'];
     const rows = filteredTransactions.map(t => [
       `"${t.payment.date || ''}"`,
       `"${t.invoiceId || ''}"`,
@@ -406,6 +431,9 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
       `"${t.customerMobile || ''}"`,
       `"${t.payment.mode || ''}"`,
       t.payment.amount || 0,
+      `"${t.payment.isDeleted ? 'VOID / DELETED' : 'ACTIVE'}"`,
+      `"${(t.payment.deletedByName || '').replace(/"/g, '""')}"`,
+      `"${t.payment.deletedAt ? new Date(t.payment.deletedAt).toLocaleDateString() : ''}"`,
       `"${(t.payment.note || '').replace(/"/g, '""')}"`,
     ]);
 
@@ -648,7 +676,8 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
               ) : (
                 filteredInvoices.map(inv => {
                   const phone = getPhoneForInvoice(inv);
-                  const paid = (inv.payments || []).reduce((s, p) => s + p.amount, 0);
+                  const activePayments = (inv.payments || []).filter(p => !p.isDeleted);
+                  const paid = activePayments.reduce((s, p) => s + p.amount, 0);
                   const remaining = Math.max(0, inv.total - paid);
                   const percent = inv.total > 0 ? Math.min(100, (paid / inv.total) * 100) : 0;
                   const isPaid = remaining <= 0;
@@ -739,7 +768,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
                           title="Record Payment for this Invoice"
                         >
                           <PlusCircle size={13} />
-                          <span>{inv.payments && inv.payments.length > 0 ? 'Manage Payments' : 'Add Payment'}</span>
+                          <span>{(inv.payments || []).filter(p => !p.isDeleted).length > 0 ? 'Manage Payments' : 'Add Payment'}</span>
                         </button>
 
                         {/* WhatsApp Reminder Button */}
@@ -801,6 +830,17 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
+
+                {/* Status Filter */}
+                <select
+                  value={transactionStatusFilter}
+                  onChange={e => setTransactionStatusFilter(e.target.value as any)}
+                  className="bg-white px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-700 outline-none"
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="active">Active</option>
+                  <option value="deleted">Deleted / Void</option>
+                </select>
               </div>
 
               {/* Export CSV Button */}
@@ -822,37 +862,84 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
               ) : (
                 filteredTransactions.map((item, idx) => {
                   const cfg = MODE_CONFIG[item.payment.mode] || MODE_CONFIG.Other;
+                  const isDel = !!item.payment.isDeleted;
                   return (
-                    <div key={item.payment.id || idx} className="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs space-y-1.5">
+                    <div
+                      key={item.payment.id || idx}
+                      className={`p-3.5 rounded-xl border shadow-xs space-y-1.5 ${
+                        isDel ? 'bg-rose-50/60 border-rose-200' : 'bg-white border-slate-200/80'
+                      }`}
+                    >
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-800">📅 {item.payment.date}</span>
-                        <span className="font-black text-emerald-700 text-sm">{formatINR(item.payment.amount)}</span>
+                        <span className={`text-sm ${isDel ? 'line-through text-slate-400 font-semibold' : 'font-black text-emerald-700'}`}>
+                          {formatINR(item.payment.amount)}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="text-xs font-bold text-slate-850">
                           <span className="text-indigo-600 mr-1.5">#{item.invoiceId}</span>
                           {item.customerName}
                         </div>
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.2 rounded-full border ${cfg.bg} ${cfg.color}`}>
-                          {cfg.icon}
-                          {item.payment.mode}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          {isDel && (
+                            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-300">
+                              VOID
+                            </span>
+                          )}
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.2 rounded-full border ${cfg.bg} ${cfg.color}`}>
+                            {cfg.icon}
+                            {item.payment.mode}
+                          </span>
+                        </div>
                       </div>
                       {item.payment.note && (
                         <div className="text-[11px] text-slate-400 italic">Note: {item.payment.note}</div>
                       )}
+                      {isDel && (
+                        <div className="text-[11px] text-rose-600 font-medium pt-0.5">
+                          Deleted by <strong>{item.payment.deletedByName || 'Admin'}</strong>
+                          {item.payment.deletedAt && (
+                            <span className="text-slate-400">
+                              {' '}• {new Date(item.payment.deletedAt).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {onDeletePayment && (
                         <div className="pt-1 flex justify-end">
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Delete payment of ${formatINR(item.payment.amount)} for invoice #${item.invoiceId}?`)) {
-                                onDeletePayment(item.invoiceId, item.payment.id);
-                              }
-                            }}
-                            className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1"
-                          >
-                            <Trash2 size={12} /> Delete
-                          </button>
+                          {isDel ? (
+                            <span className="text-[11px] text-rose-500 italic font-semibold">Deleted</span>
+                          ) : confirmDeleteId === item.payment.id ? (
+                            <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 rounded px-2 py-0.5">
+                              <span className="text-[11px] font-bold text-rose-700">Delete?</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirmDeleteId(null);
+                                  onDeletePayment(item.invoiceId, item.payment.id);
+                                }}
+                                className="px-2 py-0.5 bg-rose-600 text-white rounded text-[11px] font-bold"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[11px] font-semibold"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(item.payment.id)}
+                              className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold flex items-center gap-1"
+                            >
+                              <Trash2 size={12} /> Delete
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -885,8 +972,12 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
                   ) : (
                     filteredTransactions.map((item, idx) => {
                       const cfg = MODE_CONFIG[item.payment.mode] || MODE_CONFIG.Other;
+                      const isDel = !!item.payment.isDeleted;
                       return (
-                        <tr key={item.payment.id || idx} className="hover:bg-slate-50 transition-colors">
+                        <tr
+                          key={item.payment.id || idx}
+                          className={`transition-colors ${isDel ? 'bg-rose-50/40 hover:bg-rose-50/70 text-slate-600' : 'hover:bg-slate-50'}`}
+                        >
                           <td className="p-3 sm:p-4 font-semibold text-slate-800 whitespace-nowrap">
                             📅 {item.payment.date}
                           </td>
@@ -900,30 +991,71 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
                             )}
                           </td>
                           <td className="p-3 sm:p-4 text-center">
-                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.bg} ${cfg.color}`}>
-                              {cfg.icon}
-                              {item.payment.mode}
-                            </span>
+                            <div className="flex items-center justify-center gap-1">
+                              {isDel && (
+                                <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-300">
+                                  VOID
+                                </span>
+                              )}
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border ${cfg.bg} ${cfg.color}`}>
+                                {cfg.icon}
+                                {item.payment.mode}
+                              </span>
+                            </div>
                           </td>
-                          <td className="p-3 sm:p-4 text-slate-500 text-xs max-w-xs truncate">
-                            {item.payment.note || '-'}
+                          <td className="p-3 sm:p-4 text-slate-500 text-xs max-w-xs">
+                            <div>{item.payment.note || '-'}</div>
+                            {isDel && (
+                              <div className="text-[11px] text-rose-600 font-medium mt-0.5">
+                                Deleted by <strong>{item.payment.deletedByName || 'Admin'}</strong>
+                                {item.payment.deletedAt && (
+                                  <span className="text-slate-400">
+                                    {' '}• {new Date(item.payment.deletedAt).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </td>
-                          <td className="p-3 sm:p-4 text-right font-extrabold text-emerald-700 whitespace-nowrap">
+                          <td className={`p-3 sm:p-4 text-right whitespace-nowrap ${isDel ? 'line-through text-slate-400 font-semibold' : 'font-extrabold text-emerald-700'}`}>
                             {formatINR(item.payment.amount)}
                           </td>
                           {onDeletePayment && (
                             <td className="p-3 sm:p-4 text-center">
-                              <button
-                                onClick={() => {
-                                  if (window.confirm(`Delete payment of ${formatINR(item.payment.amount)} for invoice #${item.invoiceId}?`)) {
-                                    onDeletePayment(item.invoiceId, item.payment.id);
-                                  }
-                                }}
-                                className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                                title="Delete payment"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              {isDel ? (
+                                <span className="text-xs font-semibold text-rose-500 italic px-2 py-1 bg-rose-100/70 rounded-md">
+                                  Deleted
+                                </span>
+                              ) : confirmDeleteId === item.payment.id ? (
+                                <div className="inline-flex items-center gap-1 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1">
+                                  <span className="text-[11px] font-bold text-rose-700">Delete?</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfirmDeleteId(null);
+                                      onDeletePayment(item.invoiceId, item.payment.id);
+                                    }}
+                                    className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-bold"
+                                  >
+                                    Yes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[11px] font-semibold"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(item.payment.id)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                                  title="Delete payment"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
                             </td>
                           )}
                         </tr>
@@ -1063,7 +1195,7 @@ export const PaymentManagement: React.FC<PaymentManagementProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.print()}
+                  onClick={() => printInvoiceElement('printable-payment-invoice', viewingInvoice.id, viewingInvoice.customerName)}
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                 >
                   <Printer size={14} />

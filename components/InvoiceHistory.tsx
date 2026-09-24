@@ -6,6 +6,7 @@ import {
   Eye, 
   X, 
   Printer, 
+  FileDown,
   Download, 
   Upload, 
   Edit, 
@@ -24,6 +25,8 @@ import { InvoiceTemplate, formatBillNum } from './InvoiceTemplate';
 import { PaymentStatusBadge } from './PaymentTrackerModal';
 import { InvoiceImportModal } from './InvoiceImportModal';
 import { InvoiceAuditTrailModal } from './InvoiceAuditTrailModal';
+import { IS_ELECTRON, previewPdf } from '../electron-api';
+import { printInvoiceElement } from '../printHelper';
 
 interface InvoiceHistoryProps {
   invoices: Invoice[];
@@ -43,7 +46,7 @@ interface InvoiceHistoryProps {
 }
 
 const getPaymentStatus = (inv: Invoice): 'unpaid' | 'partial' | 'paid' => {
-  const payments = inv.payments || [];
+  const payments = (inv.payments || []).filter(p => !p.isDeleted);
   const paid = payments.reduce((s, p) => s + p.amount, 0);
   if (paid <= 0) return 'unpaid';
   if (paid >= inv.total - 0.01) return 'paid';
@@ -265,66 +268,11 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
 
   const handlePrint = () => {
     if (!viewingInvoice) return;
-
-    // Save original title and set new title for PDF filename
-    const originalTitle = document.title;
-    document.title = `Invoice_${viewingInvoice.id}_${viewingInvoice.customerName.replace(/[^a-z0-9]/gi, '_')}`;
-
-    // Create a temporary container for printing
-    const printContainer = document.createElement('div');
-    printContainer.id = 'print-only-container';
-    printContainer.className = 'print-only-container';
-    // Ensure immediate visibility for mobile browsers - use height: auto to prevent blank second page
-    printContainer.style.cssText = 'display: block !important; visibility: visible !important; position: static; width: 100%; height: auto; min-height: 0; background: white; z-index: 99999;';
-    document.body.appendChild(printContainer);
-
-    // Clone the invoice template and render it in the print container
-    const invoiceElement = document.getElementById('history-view');
-    if (invoiceElement) {
-      const clone = invoiceElement.cloneNode(true) as HTMLElement;
-      clone.style.transform = 'none';
-      clone.style.margin = '0';
-      clone.style.padding = '0'; // Use internal padding from template
-      clone.style.width = '794px'; // A4 width in pixels at 96dpi
-      clone.style.maxWidth = '100%';
-      clone.style.boxSizing = 'border-box';
-      clone.style.visibility = 'visible';
-      clone.style.display = 'block';
-      clone.style.background = 'white';
-      clone.style.minHeight = '0'; // Override min-h-[297mm] to prevent blank second page
-      clone.style.height = 'auto';
-      printContainer.appendChild(clone);
-    }
-
-    // Use requestAnimationFrame to ensure DOM is painted before printing
-    // This is more reliable on mobile browsers than setTimeout
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        // Double RAF ensures the browser has painted the content
-        window.print();
-
-        // Clean up after print dialog closes
-        // Use a longer delay for mobile browsers which may take longer to close print dialog
-        const cleanup = () => {
-          if (document.body.contains(printContainer)) {
-            document.body.removeChild(printContainer);
-          }
-          // Restore original title
-          document.title = originalTitle;
-        };
-
-        // Try to detect when print dialog closes using focus event (works on some browsers)
-        const handleFocus = () => {
-          setTimeout(cleanup, 500);
-          window.removeEventListener('focus', handleFocus);
-        };
-        window.addEventListener('focus', handleFocus);
-
-        // Fallback cleanup after a longer delay for mobile
-        setTimeout(cleanup, 3000);
-      });
-    });
+    printInvoiceElement('history-view', viewingInvoice.id, viewingInvoice.customerName);
   };
+
+
+
 
 
 
@@ -1007,7 +955,8 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                   </button>
                   <button
                     onClick={handlePrint}
-                    className="flex items-center gap-1 md:gap-2 bg-slate-700 hover:bg-slate-600 px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-slate-600"
+                    className="flex items-center gap-1 md:gap-2 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 md:px-4 md:py-2 rounded text-[10px] md:text-sm font-bold shadow-lg transition-colors border border-red-600 cursor-pointer"
+                    title="Print invoice"
                   >
                     <Printer size={14} className="md:w-4 md:h-4" />
                     <span>Print</span>

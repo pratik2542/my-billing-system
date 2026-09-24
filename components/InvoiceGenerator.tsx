@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X, CreditCard, CheckCircle2, Wallet, Banknote } from 'lucide-react';
+import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X, CreditCard, CheckCircle2, Wallet, Banknote, FileDown } from 'lucide-react';
 import { InvoiceTemplate, formatBillNum, formatBillQty } from './InvoiceTemplate';
 import { Product, Customer, InvoiceItem, BusinessSettings, Invoice, PaymentMode, PaymentEntry } from '../types';
+import { IS_ELECTRON, previewPdf } from '../electron-api';
+import { printInvoiceElement } from '../printHelper';
 
 interface InvoiceGeneratorProps {
   products: Product[];
@@ -146,8 +148,23 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       });
     }
 
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
     return list;
   }, [products, invoices]);
+
+  // Preferences from settings
+  const showUnitInBillRow = settings.showUnitInBillRow !== false;
+  const showProductPriceInDropdown = settings.showProductPriceInDropdown !== false;
+
+  // Sorted saved customers (A-Z)
+  const sortedSavedCustomers = React.useMemo(() => {
+    return [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+  }, [customers]);
+
+  // Sorted saved products (A-Z)
+  const sortedSavedProducts = React.useMemo(() => {
+    return [...products].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+  }, [products]);
 
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [selectedProductID, setSelectedProductID] = useState<string>('');
@@ -191,11 +208,12 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         setSelectedCustomer(matchingCustomer);
       }
 
-      // Pre-fill payment details if existing payments exist
-      if (editingInvoice.payments && editingInvoice.payments.length > 0) {
+      // Pre-fill payment details if existing active payments exist
+      const activeEditPayments = (editingInvoice.payments || []).filter(p => !p.isDeleted);
+      if (activeEditPayments.length > 0) {
         setRecordPayment(true);
-        const totalP = editingInvoice.payments.reduce((s, p) => s + p.amount, 0);
-        const lastP = editingInvoice.payments[editingInvoice.payments.length - 1];
+        const totalP = activeEditPayments.reduce((s, p) => s + p.amount, 0);
+        const lastP = activeEditPayments[activeEditPayments.length - 1];
         setPaymentMode(lastP.mode);
         setPaymentDate(lastP.date || editingInvoice.date);
         setPaymentNote(lastP.note || '');
@@ -224,9 +242,16 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   // Sync billNo from settings when not editing or just saved
   useEffect(() => {
     if (!isSaved && !editingInvoice) {
-      setBillNo((settings.nextInvoiceNumber || 1).toString());
+      const settingNum = Number(settings.nextInvoiceNumber) || 1;
+      // Also protect against colliding with an existing invoice ID
+      const maxExisting = (invoices || []).reduce((max, i) => {
+        const n = Number(i.id);
+        return !isNaN(n) && n > max ? n : max;
+      }, 0);
+      const safeBillNo = Math.max(settingNum, maxExisting + 1 > settingNum ? maxExisting + 1 : settingNum);
+      setBillNo(safeBillNo.toString());
     }
-  }, [settings.nextInvoiceNumber, isSaved, editingInvoice]);
+  }, [settings.nextInvoiceNumber, isSaved, editingInvoice, invoices]);
 
   // Notify parent of unsaved changes
   useEffect(() => {
@@ -260,6 +285,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
   // Scaling logic for responsiveness
   const [scale, setScale] = useState(1);
+  const [zoomOffset, setZoomOffset] = useState(0);
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -517,13 +543,27 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     if (recordPayment) {
       const amt = parseFloat(paymentAmount) || 0;
       if (amt > 0) {
-        initialPayments = [{
-          id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          amount: amt,
-          mode: paymentMode,
-          date: paymentDate || date,
-          note: paymentNote.trim() || (amt >= grandTotal - 0.01 ? 'Full payment received at bill creation' : 'Partial payment received at bill creation')
-        }];
+        if (editingInvoice && editingInvoice.payments) {
+          const deletedPayments = editingInvoice.payments.filter(p => p.isDeleted);
+          initialPayments = [
+            ...deletedPayments,
+            {
+              id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+              amount: amt,
+              mode: paymentMode,
+              date: paymentDate || date,
+              note: paymentNote.trim() || (amt >= grandTotal - 0.01 ? 'Full payment received at bill creation' : 'Partial payment received at bill creation')
+            }
+          ];
+        } else {
+          initialPayments = [{
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            amount: amt,
+            mode: paymentMode,
+            date: paymentDate || date,
+            note: paymentNote.trim() || (amt >= grandTotal - 0.01 ? 'Full payment received at bill creation' : 'Partial payment received at bill creation')
+          }];
+        }
       }
     } else if (editingInvoice && editingInvoice.payments) {
       initialPayments = editingInvoice.payments;
@@ -577,58 +617,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   };
 
   const handlePrint = () => {
-    // Save original title and set new title for PDF filename
-    const originalTitle = document.title;
-    document.title = `Invoice_${billNo}_${customerName.replace(/[^a-z0-9]/gi, '_')}`;
-
-    // Create a temporary container for printing
-    const printContainer = document.createElement('div');
-    printContainer.id = 'print-only-container';
-    printContainer.className = 'print-only-container';
-    // Ensure immediate visibility for mobile browsers
-    printContainer.style.cssText = 'display: block !important; visibility: visible !important; position: static; width: 100%; height: auto; min-height: 0; background: white; z-index: 99999;';
-    document.body.appendChild(printContainer);
-
-    // Clone the invoice template and render it in the print container
-    const invoiceElement = document.getElementById('invoice-capture');
-    if (invoiceElement) {
-      const clone = invoiceElement.cloneNode(true) as HTMLElement;
-      clone.style.transform = 'none';
-      clone.style.margin = '0';
-      clone.style.padding = '0'; // Use internal padding from template
-      clone.style.width = '794px'; // A4 width in pixels at 96dpi
-      clone.style.maxWidth = '100%';
-      clone.style.boxSizing = 'border-box';
-      clone.style.visibility = 'visible';
-      clone.style.display = 'block';
-      clone.style.background = 'white';
-      clone.style.minHeight = '0'; // Override min-h-[297mm] to prevent blank second page
-      clone.style.height = 'auto';
-      printContainer.appendChild(clone);
-    }
-
-    // Use requestAnimationFrame to ensure DOM is painted before printing
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.print();
-
-        // Clean up after print dialog closes
-        const cleanup = () => {
-          if (document.body.contains(printContainer)) {
-            document.body.removeChild(printContainer);
-          }
-          // Restore original title
-          document.title = originalTitle;
-        };
-
-        const handleFocus = () => {
-          setTimeout(cleanup, 500);
-          window.removeEventListener('focus', handleFocus);
-        };
-        window.addEventListener('focus', handleFocus);
-        setTimeout(cleanup, 3000);
-      });
-    });
+    printInvoiceElement('invoice-capture', billNo, customerName);
   };
 
 
@@ -799,9 +788,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             value="new"
           >
             <option value="new">+ Select or Type Customer Name...</option>
-            {customers.length > 0 && (
+            {sortedSavedCustomers.length > 0 && (
               <optgroup label="Saved Customers">
-                {customers.map(c => (
+                {sortedSavedCustomers.map(c => (
                   <option key={c.id} value={c.id}>{c.name} {c.city ? `(${c.city})` : ''}</option>
                 ))}
               </optgroup>
@@ -927,11 +916,11 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             >
               <option value="">Quick Select from Catalog (or type below)...</option>
               <option value="CUSTOM" className="font-bold text-red-600">➕ Add Custom / Unsaved Product...</option>
-              {products.length > 0 && (
+              {sortedSavedProducts.length > 0 && (
                 <optgroup label="Saved Catalog Products">
-                  {products.map(p => (
+                  {sortedSavedProducts.map(p => (
                     <option key={p.id} value={p.id}>
-                      {p.name} {p.packing ? `(${p.packing})` : ''} - ₹{p.rate}/{p.unit}
+                      {p.name} {p.packing ? `(${p.packing})` : ''}{showProductPriceInDropdown ? ` - ₹${p.rate || 0}/${p.unit || 'Qty'}` : ''}
                     </option>
                   ))}
                 </optgroup>
@@ -940,7 +929,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                 <optgroup label="Past Invoice Products">
                   {allProductOptions.filter(p => p.isFromInvoice).map(p => (
                     <option key={p.id} value={p.id}>
-                      {p.name} {p.packing ? `(${p.packing})` : ''} - ₹{p.rate}/{p.unit}
+                      {p.name} {p.packing ? `(${p.packing})` : ''}{showProductPriceInDropdown ? ` - ₹${p.rate || 0}/${p.unit || 'Qty'}` : ''}
                     </option>
                   ))}
                 </optgroup>
@@ -1209,7 +1198,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                           {idx + 1}. {item.name}
                         </div>
                         <div className="text-slate-500 text-xs font-medium mt-0.5">
-                          {rateLabel}: ₹{formatBillNum(item.rate)} | {qtyLabel}: {formatBillQty(item.quantity)} {item.unit}
+                          {rateLabel}: ₹{formatBillNum(item.rate)} | {qtyLabel}: {formatBillQty(item.quantity)}{item.unit ? ` ${item.unit}` : ''}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1279,7 +1268,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         </div>
 
         {/* Unit in Row & Footer Total Controls */}
-        <div className="mb-6 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
+        {showUnitInBillRow && (
+          <div className="mb-6 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
             {/* Unit in Row Toggle */}
             <div className="flex items-start justify-between gap-2">
               <label className="flex items-start gap-2.5 cursor-pointer select-none">
@@ -1382,6 +1372,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
               </div>
             </div>
           </div>
+        )}
 
           {/* Live Totals in Controls */}
           {items.length > 0 && (
@@ -1613,13 +1604,14 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             {isSaving ? "Saving..." : (editingInvoice ? "Update Invoice" : "Save")}
           </button>
+
           <button
-            onClick={handlePrint}
-            disabled={!isSaved || isSaving}
-            className="flex items-center justify-center gap-2 bg-red-600 text-white p-3 rounded hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
-          >
-            <Printer className="w-4 h-4" /> Print
-          </button>
+              onClick={handlePrint}
+              disabled={!isSaved || isSaving}
+              className="flex items-center justify-center gap-2 bg-red-600 text-white p-3 rounded hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
+            >
+              <Printer className="w-4 h-4" /> Print
+            </button>
 
           {isSaved && (
             <button
@@ -1637,7 +1629,28 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         ref={previewContainerRef}
         className={`w-full lg:w-3/5 h-full bg-slate-500/10 lg:bg-slate-200 overflow-hidden flex justify-center items-center p-4 rounded-lg relative ${!showPreviewMobile ? 'hidden lg:flex' : 'flex'}`}
       >
-        <div className="print-container origin-center transition-transform duration-200 ease-out" style={{ transform: `scale(${scale})` }}>
+        {/* Zoom Controls */}
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-1 bg-white/90 backdrop-blur-sm border border-slate-200 rounded-lg shadow-md px-1.5 py-1 no-print">
+          <button
+            onClick={() => setZoomOffset(prev => Math.min(prev + 0.05, 0.6))}
+            className="w-7 h-7 flex items-center justify-center text-slate-700 hover:bg-slate-100 rounded text-lg font-bold leading-none cursor-pointer"
+            title="Zoom In"
+          >+</button>
+          <span className="text-[11px] font-mono text-slate-500 w-10 text-center">
+            {Math.round((scale + zoomOffset) * 100)}%
+          </span>
+          <button
+            onClick={() => setZoomOffset(prev => Math.max(prev - 0.05, -0.4))}
+            className="w-7 h-7 flex items-center justify-center text-slate-700 hover:bg-slate-100 rounded text-lg font-bold leading-none cursor-pointer"
+            title="Zoom Out"
+          >−</button>
+          <button
+            onClick={() => setZoomOffset(0)}
+            className="w-7 h-7 flex items-center justify-center text-slate-500 hover:bg-slate-100 rounded text-xs font-medium cursor-pointer border-l border-slate-200 ml-0.5 pl-1"
+            title="Reset Zoom"
+          >↺</button>
+        </div>
+        <div className="print-container origin-center transition-transform duration-200 ease-out" style={{ transform: `scale(${Math.max(0.3, Math.min(1.4, scale + zoomOffset))})` }}>
           <InvoiceTemplate
             id="invoice-capture"
             billNo={billNo}

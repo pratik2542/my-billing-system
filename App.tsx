@@ -1131,18 +1131,18 @@ const compressImageToMaxDataUrl = (
       if (editingProductId) {
         const productRef = doc(prodCol, editingProductId);
         await updateDoc(productRef, {
-          name: prodForm.name,
-          rate: Number(prodForm.rate),
+          name: prodForm.name.trim(),
+          rate: prodForm.rate ? Number(prodForm.rate) : 0,
           unit: prodForm.unit,
-          packing: prodForm.packing
+          packing: prodForm.packing.trim()
         });
         setEditingProductId(null);
       } else {
         await addDoc(prodCol, {
-          name: prodForm.name,
-          rate: Number(prodForm.rate),
+          name: prodForm.name.trim(),
+          rate: prodForm.rate ? Number(prodForm.rate) : 0,
           unit: prodForm.unit,
-          packing: prodForm.packing,
+          packing: prodForm.packing.trim(),
         });
       }
       setProdForm({ name: '', packing: '', rate: '', unit: getDefaultUnit(settings) });
@@ -1546,9 +1546,21 @@ const compressImageToMaxDataUrl = (
     if (!invSnap.exists()) throw new Error('Invoice not found');
     const current = invSnap.data() as Invoice;
     const targetPayment = (current.payments || []).find(p => p.id === paymentId);
-    const updatedPayments = (current.payments || []).filter(p => p.id !== paymentId);
-
     const userName = userProfile?.displayName || user.displayName || user.email?.split('@')[0] || 'User';
+
+    const updatedPayments = (current.payments || []).map(p => {
+      if (p.id === paymentId) {
+        return {
+          ...p,
+          isDeleted: true,
+          deletedAt: Date.now(),
+          deletedBy: user.uid,
+          deletedByName: userName,
+        };
+      }
+      return p;
+    });
+
     const delPayEntry: InvoiceAuditEntry = {
       id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       action: 'payment_deleted',
@@ -1557,7 +1569,7 @@ const compressImageToMaxDataUrl = (
       userName: userName,
       userEmail: user.email || undefined,
       userRole: userProfile?.role || 'staff',
-      summary: `Payment of ₹${formatBillNum(targetPayment?.amount || 0)} (${targetPayment?.mode || 'N/A'}) removed from Bill #${invoiceId}`,
+      summary: `Payment of ₹${formatBillNum(targetPayment?.amount || 0)} (${targetPayment?.mode || 'N/A'}) deleted by ${userName}`,
       snapshot: {
         total: current.total,
         itemsCount: current.items?.length || 0,
@@ -1573,6 +1585,8 @@ const compressImageToMaxDataUrl = (
       payments: updatedPayments,
       auditTrail: updatedAudit
     }));
+
+    logUserActivity('payment', 'Delete Payment', `Deleted payment of ₹${formatBillNum(targetPayment?.amount || 0)} (${targetPayment?.mode || 'N/A'}) for Bill #${invoiceId}`);
 
     // Update local paymentInvoice state so modal reflects immediately
     setPaymentInvoice(prev => prev && prev.id === invoiceId ? { ...prev, payments: updatedPayments, auditTrail: updatedAudit } : prev);
@@ -1697,17 +1711,17 @@ const compressImageToMaxDataUrl = (
     ? (settings.analyticsVisibility?.showAiBusinessAnalyst !== false)
     : (userProfile?.analyticsPermissions?.showAiBusinessAnalyst !== false);
 
-  const hasProductAnalysisPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+  const hasProductAnalysisPermission = isProductsMenuAllowed && ((userProfile?.role === 'admin' || isMainAdminUser(user))
     ? (settings.analyticsVisibility?.showProductAnalysis !== false)
-    : (userProfile?.analyticsPermissions?.showProductAnalysis !== false);
+    : (userProfile?.analyticsPermissions?.showProductAnalysis !== false));
 
-  const hasCustomerAnalysisPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+  const hasCustomerAnalysisPermission = isCustomersMenuAllowed && ((userProfile?.role === 'admin' || isMainAdminUser(user))
     ? (settings.analyticsVisibility?.showCustomerAnalysis !== false)
-    : (userProfile?.analyticsPermissions?.showCustomerAnalysis !== false);
+    : (userProfile?.analyticsPermissions?.showCustomerAnalysis !== false));
 
-  const hasCustomerPurchaseDetailsPermission = (userProfile?.role === 'admin' || isMainAdminUser(user))
+  const hasCustomerPurchaseDetailsPermission = isCustomersMenuAllowed && ((userProfile?.role === 'admin' || isMainAdminUser(user))
     ? (settings.analyticsVisibility?.showCustomerPurchaseDetails !== false)
-    : (userProfile?.analyticsPermissions?.showCustomerPurchaseDetails !== false);
+    : (userProfile?.analyticsPermissions?.showCustomerPurchaseDetails !== false));
 
   const canViewCustomerSpending = hasCustomerAnalysisPermission && hasCustomerPurchaseDetailsPermission;
 
@@ -1991,6 +2005,9 @@ const compressImageToMaxDataUrl = (
               }}
               onAiRequest={handleAiRequest}
               enablePaymentTracking={isPaymentTrackingActive}
+              enableAiAnalyst={hasAiAnalyticsPermission}
+              enableProductsMenu={isProductsMenuAllowed}
+              enableCustomersMenu={isCustomersMenuAllowed}
             />
           </ErrorBoundary>
         )}
@@ -2048,11 +2065,10 @@ const compressImageToMaxDataUrl = (
                     <input
                       name="rate"
                       type="number"
-                      required
-                      placeholder="Rate"
+                      placeholder="Rate (optional)"
                       value={prodForm.rate}
                       onChange={e => setProdForm({ ...prodForm, rate: e.target.value })}
-                      className="w-20 sm:w-24 p-2 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-red-500 focus:outline-none bg-white shrink-0"
+                      className="w-24 sm:w-28 p-2 border border-slate-300 rounded text-sm focus:ring-1 focus:ring-red-500 focus:outline-none bg-white shrink-0 font-semibold"
                     />
                     {(() => {
                       const activeUnits = (settings.customUnits && settings.customUnits.length > 0)
@@ -2102,7 +2118,7 @@ const compressImageToMaxDataUrl = (
                           <p className="text-sm text-slate-500">{p.packing || 'No packing info'}</p>
                         </div>
                         <div className="text-right">
-                          <div className="text-xl font-bold text-red-600">₹{p.rate}</div>
+                          <div className="text-xl font-bold text-red-600">{p.rate ? `₹${p.rate}` : '-'}</div>
                           <span className="inline-block mt-1 px-2 py-1 bg-slate-100 rounded text-xs font-medium text-slate-700">{p.unit}</span>
                         </div>
                       </div>
@@ -2147,7 +2163,7 @@ const compressImageToMaxDataUrl = (
                         <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${editingProductId === p.id ? 'bg-blue-50' : ''}`}>
                           <td className="p-4 font-semibold text-slate-900">{p.name}</td>
                           <td className="p-4 text-slate-600">{p.packing || '-'}</td>
-                          <td className="p-4 font-bold text-red-600">₹{p.rate}</td>
+                          <td className="p-4 font-bold text-red-600">{p.rate ? `₹${p.rate}` : '-'}</td>
                           <td className="p-4"><span className="px-3 py-1 bg-slate-100 rounded-full text-xs font-medium text-slate-700">{p.unit}</span></td>
                           <td className="p-4 text-right">
                             <div className="flex justify-end gap-2">
@@ -3609,6 +3625,53 @@ const compressImageToMaxDataUrl = (
                             <span>Payment tracking has been blocked by an administrator.</span>
                           </div>
                         )}
+                      </div>
+
+                      {/* Create Bill Display Options */}
+                      <div className="bg-slate-50 p-3 sm:p-4 rounded-xl border border-slate-200 space-y-3">
+                        <h3 className="font-bold text-slate-800 text-sm sm:text-base flex items-center gap-2">
+                          <Sliders className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+                          Create Bill Display Options
+                        </h3>
+                        <p className="text-[11px] sm:text-xs text-slate-500">
+                          Customize which controls and information appear while generating bills.
+                        </p>
+
+                        <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 space-y-3">
+                          <label htmlFor="showUnitInBillRow" className="flex items-start gap-2.5 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              id="showUnitInBillRow"
+                              checked={tempSettings.showUnitInBillRow !== false}
+                              onChange={e => handleTempSettingsChange({ ...tempSettings, showUnitInBillRow: e.target.checked })}
+                              className="w-4 h-4 sm:w-5 sm:h-5 accent-indigo-600 cursor-pointer mt-0.5 shrink-0"
+                            />
+                            <div>
+                              <span className="text-xs sm:text-sm font-bold text-slate-800 block">Show Unit & Footer Total Section in Create Bill</span>
+                              <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">
+                                When enabled, the section with "Show Unit in Bill Rows" and "Footer Total Quantity" appears in Create Bill. When disabled, this section is hidden and the bill uses default values.
+                              </span>
+                            </div>
+                          </label>
+
+                          <div className="border-t border-slate-100 pt-3">
+                            <label htmlFor="showProductPriceInDropdown" className="flex items-start gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                id="showProductPriceInDropdown"
+                                checked={tempSettings.showProductPriceInDropdown !== false}
+                                onChange={e => handleTempSettingsChange({ ...tempSettings, showProductPriceInDropdown: e.target.checked })}
+                                className="w-4 h-4 sm:w-5 sm:h-5 accent-indigo-600 cursor-pointer mt-0.5 shrink-0"
+                              />
+                              <div>
+                                <span className="text-xs sm:text-sm font-bold text-slate-800 block">Show Price in Product Catalog Dropdown</span>
+                                <span className="text-[11px] sm:text-xs text-slate-500 mt-0.5 block">
+                                  When enabled, displays the rate and unit (e.g. - ₹50/Kg) next to product names in the quick-select catalog dropdown.
+                                </span>
+                              </div>
+                            </label>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}

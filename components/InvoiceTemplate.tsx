@@ -110,11 +110,12 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const totalAmount = Math.round((calcSubtotal + calcSgst + calcCgst) * 100) / 100;
 
   // Payment status & totals
-  const totalPaid = Math.round((payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
+  const activePayments = (payments || []).filter(p => !p.isDeleted);
+  const totalPaid = Math.round(activePayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0) * 100) / 100;
   const remainingBalance = Math.max(0, Math.round((totalAmount - totalPaid) * 100) / 100);
-  const isPaidInFull = !!(payments && payments.length > 0 && remainingBalance <= 0.01 && totalPaid > 0);
-  const isPartiallyPaid = !!(payments && payments.length > 0 && totalPaid > 0 && remainingBalance > 0.01);
-  const lastPaymentMode = payments && payments.length > 0 ? payments[payments.length - 1].mode : '';
+  const isPaidInFull = !!(activePayments.length > 0 && remainingBalance <= 0.01 && totalPaid > 0);
+  const isPartiallyPaid = !!(activePayments.length > 0 && totalPaid > 0 && remainingBalance > 0.01);
+  const lastPaymentMode = activePayments.length > 0 ? activePayments[activePayments.length - 1].mode : '';
 
   const totalQty = Math.round(items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0) * 100) / 100;
   const amountInWords = numberToWords(Math.round(totalAmount));
