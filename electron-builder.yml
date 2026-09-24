@@ -18,9 +18,16 @@ files:
   - electron/migrations/**
   - "!electron/**/*.ts"
   - package.json
-  - node_modules/**/*
-  - "!node_modules/**/node_gyp_bins"
-  - "!node_modules/**/{CHANGELOG.md,README.md,readme.md,test,tests,__tests__,*.test.js,*.spec.js,docs}"
+  - from: "node_modules/better-sqlite3"
+    to: "node_modules/better-sqlite3"
+  - from: "node_modules/bindings"
+    to: "node_modules/bindings"
+  - from: "node_modules/file-uri-to-path"
+    to: "node_modules/file-uri-to-path"
+  - from: "node_modules/node-machine-id"
+    to: "node_modules/node-machine-id"
+  - from: "node_modules/node-cron"
+    to: "node_modules/node-cron"
 
 # ─── Extra resources bundled inside the app (accessible via process.resourcesPath)
 extraResources:

@@ -1,7 +1,7 @@
 {
   "name": "universal-billing-system",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Offline billing and invoice management system",
   "author": "Pratik",
   "type": "module",
