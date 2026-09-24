@@ -1,7 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { autoUpdater } from 'electron-updater';
 
 // ─── Local modules ────────────────────────────────────────────────────────────
 import {
@@ -209,23 +208,37 @@ async function startServices(features: any): Promise<void> {
   }
 }
 
-// ─── Auto Updater Setup ───────────────────────────────────────────────────────
+// ─── Auto Updater Setup (Safe fallback for offline mode) ──────────────────────
+let autoUpdaterInstance: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const updaterModule = require('electron-updater');
+  autoUpdaterInstance = updaterModule.autoUpdater || updaterModule;
+} catch {
+  // Running in offline mode without auto-updater bundled
+}
+
 function setupAutoUpdater(mode: 'silent' | 'manual'): void {
-  autoUpdater.checkForUpdatesAndNotify().catch(() => {/* no update server yet */});
+  if (!autoUpdaterInstance) return;
+  try {
+    autoUpdaterInstance.checkForUpdatesAndNotify().catch(() => {/* no update server yet */});
 
-  autoUpdater.on('update-available', (info) => {
-    mainWindow?.webContents.send('update-available', info);
-    if (mode === 'silent') {
-      autoUpdater.downloadUpdate();
-    }
-  });
+    autoUpdaterInstance.on('update-available', (info: any) => {
+      mainWindow?.webContents.send('update-available', info);
+      if (mode === 'silent') {
+        autoUpdaterInstance.downloadUpdate();
+      }
+    });
 
-  autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('update-downloaded', info);
-    if (mode === 'silent') {
-      autoUpdater.quitAndInstall();
-    }
-  });
+    autoUpdaterInstance.on('update-downloaded', (info: any) => {
+      mainWindow?.webContents.send('update-downloaded', info);
+      if (mode === 'silent') {
+        autoUpdaterInstance.quitAndInstall();
+      }
+    });
+  } catch (e) {
+    console.warn('[AutoUpdater] Failed to initialize:', e);
+  }
 }
 
 // ─── App Exit ─────────────────────────────────────────────────────────────────
@@ -361,8 +374,13 @@ ipcMain.handle('config:get', (_, key: string) => configDb.get(key));
 ipcMain.handle('config:set', (_, key: string, value: string) => configDb.set(key, value));
 
 // ── Updates ───────────────────────────────────────────────────────────────────
-ipcMain.handle('updater:check', () => autoUpdater.checkForUpdatesAndNotify());
-ipcMain.on('updater:install', () => autoUpdater.quitAndInstall());
+ipcMain.handle('updater:check', () => {
+  if (!autoUpdaterInstance) return { success: false, error: 'Offline edition — updater disabled.' };
+  return autoUpdaterInstance.checkForUpdatesAndNotify().catch((e: any) => ({ success: false, error: e?.message }));
+});
+ipcMain.on('updater:install', () => {
+  if (autoUpdaterInstance) autoUpdaterInstance.quitAndInstall();
+});
 
 // ── WhatsApp & External Links ─────────────────────────────────────────────────
 ipcMain.handle('app:openWhatsApp', async (_, phone: string, text: string) => {
