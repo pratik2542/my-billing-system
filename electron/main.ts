@@ -163,7 +163,7 @@ app.whenReady().then(async () => {
   initDatabase();
 
   // 2. Load features
-  const features = loadFeatures();
+  let features = loadFeatures();
 
   // 3. Check license
   const licenseResult = checkLicenseOnStartup();
@@ -180,6 +180,24 @@ app.whenReady().then(async () => {
     });
   } else {
     licenseAdminEmail = licenseResult.adminEmail;
+    if (licenseResult.features) {
+      const featList = licenseResult.features;
+      saveFeatures({
+        ...features,
+        enableAnalytics: featList.includes('analytics'),
+        enableAiAnalyst: featList.includes('ai'),
+        ollamaModel: features.ollamaModel || 'qwen2.5:7b',
+        enablePaymentTracking: featList.includes('payments'),
+        enableProductsMenu: featList.includes('products'),
+        enableCustomersMenu: featList.includes('customers'),
+        enableGst: featList.includes('gst'),
+        enableCsvImport: featList.includes('csv'),
+        enableAuditTrail: featList.includes('audit'),
+        enableCloudImport: featList.includes('cloudimport'),
+        customerName: licenseResult.customerName || features.customerName || 'Customer',
+      });
+      features = loadFeatures();
+    }
     createWindow();
     startServices(features);
   }

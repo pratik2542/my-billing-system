@@ -42,9 +42,7 @@ jobs:
         run: npx vite build --config vite.electron.config.ts
 
       - name: Package Windows Installer (.exe)
-        run: npx electron-builder --win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish never
 
       - name: Determine Tag Name
         id: get_tag
