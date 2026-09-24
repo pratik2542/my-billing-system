@@ -47,12 +47,14 @@
     "@vitejs/plugin-react": "^6.0.5",
     "concurrently": "^9.1.2",
     "electron": "^35.7.5",
-    "electron-builder": "^25.1.8",
-    "electron-rebuild": "^3.2.9",
+    "electron-builder": "^26.15.3",
     "electron-updater": "^6.8.9",
     "javascript-obfuscator": "^5.7.0",
     "typescript": "~7.0.2",
     "vite": "^8.2.1",
     "wait-on": "^8.0.3"
+  },
+  "overrides": {
+    "tar": "^7.5.22"
   }
 }
