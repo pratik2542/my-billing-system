@@ -22,6 +22,7 @@
     "rebuild": "node scripts/install-prebuilt-sqlite.cjs"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.2.0",
     "@google/genai": "^2.17.0",
     "better-sqlite3": "^9.6.0",
     "dotenv": "^17.4.2",

@@ -3,8 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import { initializeApp as initAdminApp, getApps as getAdminApps, cert as adminCert } from 'firebase-admin/app';
-import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { initializeApp as initClientApp } from 'firebase/app';
 import { getFirestore as getClientDb, collection as clientCollection, getDocs as clientGetDocs, doc as clientDoc, getDoc as clientGetDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
@@ -80,6 +78,9 @@ async function initializeDatabase() {
       } else {
         serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
       }
+
+      const { initializeApp: initAdminApp, getApps: getAdminApps, cert: adminCert } = await import('firebase-admin/app');
+      const { getFirestore: getAdminFirestore } = await import('firebase-admin/firestore');
 
       const apps = getAdminApps();
       const adminApp = apps.length > 0 ? apps[0] : initAdminApp({
