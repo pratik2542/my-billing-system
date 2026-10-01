@@ -1145,7 +1145,7 @@ const OfflineLicenseModal: React.FC<{
       };
 
       // Sign with Ed25519 Private Key via WebCrypto
-      const privKeyBytes = new Uint8Array(activeKey.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+      const privKeyBytes = new Uint8Array(activeKey.match(/.{1,2}/g)!.map((b: string) => parseInt(b, 16)));
       const cryptoKey = await window.crypto.subtle.importKey(
         "pkcs8",
         privKeyBytes,

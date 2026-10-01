@@ -205,6 +205,14 @@ const formatCompactNumber = (value: number): string => {
 
 const formatINRCompact = (amount: number): string => `₹${formatCompactNumber(amount)}`;
 const formatINRFull = (amount: number): string => `₹${Math.round(amount).toLocaleString('en-IN')}`;
+const formatINRExact = (amount: number): string => {
+  if (isNaN(amount) || amount === 0) return '₹0';
+  const hasDecimals = amount % 1 !== 0;
+  return `₹${amount.toLocaleString('en-IN', {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2
+  })}`;
+};
 
 const TooltipValue = ({
   display,
@@ -217,6 +225,7 @@ const TooltipValue = ({
   align?: 'left' | 'center' | 'right';
   className?: string;
 }) => {
+  const [mobileTooltipOpen, setMobileTooltipOpen] = useState(false);
   const alignClass =
     align === 'left'
       ? 'left-0'
@@ -225,10 +234,18 @@ const TooltipValue = ({
         : 'left-1/2 -translate-x-1/2';
 
   return (
-    <span className={`relative inline-flex items-center ${className} group`} tabIndex={0}>
+    <span
+      className={`relative inline-flex items-center ${className} group cursor-pointer`}
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        setMobileTooltipOpen(prev => !prev);
+      }}
+      title={full}
+    >
       <span className="whitespace-nowrap">{display}</span>
       <span
-        className={`absolute ${alignClass} bottom-full mb-1 hidden group-hover:block group-focus:block group-active:block bg-slate-900 text-white text-[10px] px-2 py-1 rounded shadow-lg z-50 max-w-[90vw] break-words`}
+        className={`absolute ${alignClass} bottom-full mb-1.5 ${mobileTooltipOpen ? 'block' : 'hidden'} group-hover:block group-focus:block bg-slate-900 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md shadow-xl z-[70] whitespace-nowrap border border-slate-700 pointer-events-none animate-fadeIn`}
       >
         {full}
       </span>
@@ -1430,11 +1447,40 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const [qaInput, setQaInput] = useState('');
   const [chat, setChat] = useState<AIChatMessage[]>([]);
   const [chatExpanded, setChatExpanded] = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatMessagesContainerRef = useRef<HTMLDivElement>(null);
+  const modalChatMessagesContainerRef = useRef<HTMLDivElement>(null);
+  const isInitialChatMount = useRef(true);
+  const dashboardScrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom whenever chat updates
+  // Revenue Exact Amount Popover & Direct Card Toggle
+  const [revenuePopoverOpen, setRevenuePopoverOpen] = useState(false);
+  const [showExactRevenue, setShowExactRevenue] = useState(false);
+
+  // Volume / Total Kg Full List Popover
+  const [volumePopoverOpen, setVolumePopoverOpen] = useState(false);
+
+  // Ensure dashboard page always starts at the top when user opens AI Analytics
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (dashboardScrollContainerRef.current) {
+      dashboardScrollContainerRef.current.scrollTop = 0;
+    }
+  }, []);
+
+  // Auto-scroll chat box ONLY when user asks a question or gets an AI response,
+  // NEVER on initial mount, and ONLY scrolling the internal chat box, NOT the outer web page
+  useEffect(() => {
+    if (isInitialChatMount.current) {
+      isInitialChatMount.current = false;
+      return;
+    }
+    if (chat.length > 0 || qaLoading) {
+      if (chatMessagesContainerRef.current) {
+        chatMessagesContainerRef.current.scrollTop = chatMessagesContainerRef.current.scrollHeight;
+      }
+      if (modalChatMessagesContainerRef.current) {
+        modalChatMessagesContainerRef.current.scrollTop = modalChatMessagesContainerRef.current.scrollHeight;
+      }
+    }
   }, [chat, qaLoading]);
 
   const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
@@ -2530,17 +2576,17 @@ Provide response in JSON with these fields:
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-3 md:p-6 bg-slate-50" onScroll={handleScroll}>
+        <div ref={dashboardScrollContainerRef} className="flex-1 overflow-y-auto p-3 md:p-6 bg-slate-50" onScroll={handleScroll}>
           <div className="space-y-4 md:space-y-6">
             {/* --- Global Filter Bar (Auto-hide on scroll down, show on scroll up, zero right overflow) --- */}
             <div
-              className={`flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2.5 bg-white/95 backdrop-blur-md p-2.5 md:p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-20 transition-all duration-300 ease-in-out max-w-full overflow-hidden ${
+              className={`flex flex-wrap items-center justify-between gap-2.5 bg-white/95 backdrop-blur-md p-2.5 md:p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-20 transition-all duration-300 ease-in-out max-w-full ${
                 isFilterVisible
                   ? 'translate-y-0 opacity-100'
                   : '-translate-y-[150%] opacity-0 pointer-events-none'
               }`}
             >
-              <div className="grid grid-cols-3 sm:flex sm:flex-wrap lg:flex-nowrap items-center gap-1.5 w-full lg:w-auto select-none max-w-full">
+              <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-1.5 w-full lg:w-auto select-none max-w-full">
                 {[
                   { id: 'month', label: 'Month', fullLabel: 'This Month', icon: '🗓️' },
                   { id: 'last-month', label: 'Last Month', fullLabel: 'Last Month', icon: '📅' },
@@ -2581,19 +2627,19 @@ Provide response in JSON with these fields:
               </div>
 
               {timeFilter === 'custom' && (
-                <div className="flex items-center gap-2 w-full lg:w-auto bg-slate-50 p-1.5 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-top-2 lg:slide-in-from-right-4 shrink-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto bg-slate-50 p-1.5 rounded-lg border border-slate-200 animate-in fade-in shrink-0">
                   <input
                     type="date"
                     value={customStart}
                     onChange={(e) => setCustomStart(e.target.value)}
-                    className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 w-full md:w-auto"
+                    className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 flex-1 sm:flex-initial sm:w-36 min-w-0"
                   />
-                  <span className="text-slate-400 font-bold">-</span>
+                  <span className="text-slate-400 font-bold shrink-0">-</span>
                   <input
                     type="date"
                     value={customEnd}
                     onChange={(e) => setCustomEnd(e.target.value)}
-                    className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 w-full md:w-auto"
+                    className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-500 flex-1 sm:flex-initial sm:w-36 min-w-0"
                   />
                 </div>
               )}
@@ -2654,16 +2700,123 @@ Provide response in JSON with these fields:
 
             {/* --- KPI Cards (Local Data) --- */}
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 md:gap-4">
-              <div className="bg-gradient-to-br from-red-50 to-orange-50 p-3 sm:p-4 rounded-xl shadow-sm border border-red-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
+              {/* 1. Revenue Card with Hover on desktop & Tap/Click on mobile for exact amount */}
+              <div
+                onClick={() => {
+                  setRevenuePopoverOpen(true);
+                  setShowExactRevenue(prev => !prev);
+                }}
+                className="bg-gradient-to-br from-red-50 to-orange-50 p-3 sm:p-4 rounded-xl shadow-sm border border-red-100 hover:border-red-300 hover:shadow-md transition-all min-w-0 flex flex-col justify-between cursor-pointer group relative select-none"
+                title={`Exact Revenue: ${formatINRExact(stats.totalRevenue)} (Click to view details)`}
+              >
                 <div className="flex justify-between items-start mb-2">
-                  <div className="p-1.5 bg-white rounded-lg text-red-600 shadow-sm"><Wallet size={18} /></div>
-                  <span className="text-[10px] sm:text-xs font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Revenue</span>
+                  <div className="p-1.5 bg-white rounded-lg text-red-600 shadow-sm group-hover:scale-105 transition-transform"><Wallet size={18} /></div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] sm:text-xs font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">Revenue</span>
+                    <span className="text-[9px] font-extrabold text-red-600 bg-white/90 group-hover:bg-red-600 group-hover:text-white px-1.5 py-0.5 rounded-md transition-colors shadow-2xs">
+                      {showExactRevenue ? 'Exact' : 'Tap'}
+                    </span>
+                  </div>
                 </div>
-                <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
-                  <TooltipValue display={formatINRCompact(stats.totalRevenue)} full={formatINRFull(stats.totalRevenue)} />
+
+                <div className="relative">
+                  <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 leading-tight">
+                    {showExactRevenue ? formatINRExact(stats.totalRevenue) : formatINRCompact(stats.totalRevenue)}
+                  </div>
+                  {/* Desktop hover floating tooltip */}
+                  <div className="absolute left-0 bottom-full mb-1.5 hidden group-hover:flex items-center gap-1.5 bg-slate-900 text-white text-xs px-2.5 py-1 rounded-lg shadow-xl z-50 pointer-events-none whitespace-nowrap border border-slate-700 animate-fadeIn">
+                    <span className="text-slate-400 font-normal">Exact:</span>
+                    <span className="font-extrabold text-emerald-400">{formatINRExact(stats.totalRevenue)}</span>
+                  </div>
                 </div>
-                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Total Earnings</div>
+
+                <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
+                  <span className="truncate">Total Earnings</span>
+                  <span className="text-[10px] text-red-700 font-semibold group-hover:underline">
+                    {showExactRevenue ? 'Compact' : 'Exact →'}
+                  </span>
+                </div>
               </div>
+
+              {/* Exact Revenue Popup / Popover Modal for Mobile & Web */}
+              {revenuePopoverOpen && (
+                <div
+                  className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fadeIn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRevenuePopoverOpen(false);
+                  }}
+                >
+                  <div
+                    className="bg-white rounded-2xl p-5 shadow-2xl border border-red-200 w-full max-w-sm transform transition-all animate-scaleUp"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-red-100 text-red-600 rounded-xl">
+                          <Wallet size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-800">Total Exact Revenue</h4>
+                          <p className="text-[11px] text-slate-500">Unrounded exact amount</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setRevenuePopoverOpen(false)}
+                        className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
+                        title="Close"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="my-4 p-4 bg-gradient-to-br from-red-50 to-orange-50 rounded-xl border border-red-100 text-center">
+                      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Exact Total Amount</div>
+                      <div className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight text-red-600">
+                        {formatINRExact(stats.totalRevenue)}
+                      </div>
+                      <div className="text-xs font-medium text-slate-600 mt-1">
+                        Compact format: <span className="font-bold text-slate-800">{formatINRCompact(stats.totalRevenue)}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between items-center py-2 px-3 bg-slate-50 rounded-lg">
+                        <span className="text-slate-600">Total Invoices:</span>
+                        <span className="font-bold text-slate-900">{stats.totalBills} Bills</span>
+                      </div>
+                      <div className="flex justify-between items-center py-2 px-3 bg-slate-50 rounded-lg">
+                        <span className="text-slate-600">Average Order Value:</span>
+                        <span className="font-bold text-slate-900">{formatINRExact(stats.avgBillValue)}</span>
+                      </div>
+                      {stats.totalBills > 0 && (
+                        <div className="flex justify-between items-center py-2 px-3 bg-slate-50 rounded-lg">
+                          <span className="text-slate-600">Repeat Customers:</span>
+                          <span className="font-bold text-emerald-700">{stats.repeatCustomers} ({stats.repeatPurchaseRate.toFixed(0)}%)</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex gap-2">
+                      <button
+                        onClick={() => {
+                          setShowExactRevenue(prev => !prev);
+                          setRevenuePopoverOpen(false);
+                        }}
+                        className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                      >
+                        {showExactRevenue ? 'Switch Card to Compact' : 'Show Exact on Card'}
+                      </button>
+                      <button
+                        onClick={() => setRevenuePopoverOpen(false)}
+                        className="py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-gradient-to-br from-blue-50 to-cyan-50 p-3 sm:p-4 rounded-xl shadow-sm border border-blue-100 hover:shadow-md transition-shadow min-w-0 flex flex-col justify-between">
                 <div className="flex justify-between items-start mb-2">
@@ -2680,7 +2833,7 @@ Provide response in JSON with these fields:
                   <span className="text-[10px] sm:text-xs font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">Avg</span>
                 </div>
                 <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
-                  <TooltipValue display={formatINRCompact(Math.round(stats.avgBillValue))} full={formatINRFull(Math.round(stats.avgBillValue))} />
+                  <TooltipValue display={formatINRCompact(Math.round(stats.avgBillValue))} full={formatINRExact(stats.avgBillValue)} />
                 </div>
                 <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">AOV (Avg Order)</div>
               </div>
@@ -2700,11 +2853,12 @@ Provide response in JSON with these fields:
                   <span className="text-[10px] sm:text-xs font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">LTV</span>
                 </div>
                 <div className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 truncate">
-                  <TooltipValue display={formatINRCompact(Math.round(stats.avgLTV))} full={formatINRFull(Math.round(stats.avgLTV))} />
+                  <TooltipValue display={formatINRCompact(Math.round(stats.avgLTV))} full={formatINRExact(stats.avgLTV)} />
                 </div>
                 <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium truncate">Customer LTV</div>
               </div>
 
+              {/* 6. Total Volume / Total Kg Card showing Top unit and the Full List of totals */}
               <div
                 onClick={() => setVolumeDetailModalOpen(true)}
                 className="bg-gradient-to-br from-amber-50 to-yellow-50 p-3 sm:p-4 rounded-xl shadow-sm border border-amber-200 hover:border-amber-400 hover:shadow-md transition-all min-w-0 flex flex-col justify-between cursor-pointer group relative"
@@ -2718,6 +2872,8 @@ Provide response in JSON with these fields:
                     ? (summary.dominantQty % 1 === 0 ? summary.dominantQty.toLocaleString('en-IN') : summary.dominantQty.toFixed(1))
                     : '0';
 
+                  const hasMultipleUnits = summary.entries && summary.entries.length > 1;
+
                   return (
                     <>
                       <div className="flex justify-between items-start mb-2">
@@ -2728,11 +2884,12 @@ Provide response in JSON with these fields:
                           <span className="text-[10px] sm:text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full truncate max-w-[80px]">
                             {summary.dominantUnit || 'Volume'}
                           </span>
-                          <span className="text-[10px] font-extrabold text-amber-700 bg-white/90 group-hover:bg-amber-600 group-hover:text-white px-1.5 py-0.5 rounded-md transition-colors shadow-xs flex items-center gap-0.5">
+                          <span className="text-[10px] font-extrabold text-amber-700 bg-white/90 group-hover:bg-amber-600 group-hover:text-white px-1.5 py-0.5 rounded-md transition-colors shadow-2xs flex items-center gap-0.5">
                             Details <ChevronRight size={10} />
                           </span>
                         </div>
                       </div>
+
                       <div className="flex items-baseline gap-1 flex-wrap min-w-0" title={summary.text}>
                         <span className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 leading-tight">
                           {formattedQty}
@@ -2741,14 +2898,40 @@ Provide response in JSON with these fields:
                           {summary.dominantUnit || 'Units'}
                         </span>
                       </div>
-                      <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
-                        <span className="truncate group-hover:text-amber-800 transition-colors font-semibold">{title}</span>
-                        {summary.secondaryText && (
-                          <span className="text-[10px] font-bold text-amber-800 bg-amber-200/60 px-1.5 py-0.5 rounded truncate max-w-full" title={summary.text}>
-                            {summary.secondaryText}
-                          </span>
-                        )}
-                      </div>
+
+                      {/* Full List of Totals Breakdown on Card */}
+                      {hasMultipleUnits ? (
+                        <div className="mt-1.5 pt-1.5 border-t border-amber-200/70">
+                          <div className="text-[10px] font-bold text-amber-900 uppercase tracking-wider mb-1 flex items-center justify-between">
+                            <span>All Totals ({summary.entries.length}):</span>
+                            <span className="text-[9px] text-amber-700 font-extrabold group-hover:underline">View All →</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {summary.entries.slice(0, 3).map(([uName, uQty], uIdx) => (
+                              <span
+                                key={uIdx}
+                                className="text-[10px] font-bold bg-amber-100/90 text-amber-900 px-1.5 py-0.5 rounded border border-amber-200/80"
+                              >
+                                {uQty % 1 === 0 ? uQty.toLocaleString('en-IN') : uQty.toFixed(1)} {uName}
+                              </span>
+                            ))}
+                            {summary.entries.length > 3 && (
+                              <span className="text-[9px] font-bold text-amber-700 self-center">
+                                +{summary.entries.length - 3} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] sm:text-xs text-slate-600 mt-1 font-medium flex items-center justify-between gap-1 flex-wrap">
+                          <span className="truncate group-hover:text-amber-800 transition-colors font-semibold">{title}</span>
+                          {summary.secondaryText && (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-200/60 px-1.5 py-0.5 rounded truncate max-w-full" title={summary.text}>
+                              {summary.secondaryText}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </>
                   );
                 })()}
@@ -3719,7 +3902,7 @@ Provide response in JSON with these fields:
                 )}
 
                 <div className="space-y-3">
-                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                  <div ref={chatMessagesContainerRef} className="max-h-64 overflow-y-auto space-y-2 pr-1">
                     {chat.length === 0 ? (
                       <div className="text-slate-300 text-xs">
                         દા.ત.: "મારા સૌથી વધારે ખર્ચ કરનાર ગ્રાહક કોણ છે?" અથવા "વેચાણનો ચાર્ટ બતાવો"
@@ -3859,7 +4042,6 @@ Provide response in JSON with these fields:
                       Thinking...
                     </div>
                   )}
-                  <div ref={chatBottomRef} />
 
                   {/* Quick Chart Suggestion Pills - Wrapped for Mobile */}
                   <div className="flex flex-wrap items-center gap-1.5 py-1">
@@ -3938,7 +4120,7 @@ Provide response in JSON with these fields:
                   </div>
 
                   {/* Chat Messages — full scroll area */}
-                  <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                  <div ref={modalChatMessagesContainerRef} className="flex-1 overflow-y-auto p-5 space-y-3">
                     {chat.length === 0 && !qaLoading && (
                       <div className="text-slate-400 text-sm text-center mt-8">
                         Try: "મારા સૌથી વધારે ખર્ચ કરનાર ગ્રાહક?" or "Show chart of revenue by date"
@@ -3980,7 +4162,6 @@ Provide response in JSON with these fields:
                         Thinking...
                       </div>
                     )}
-                    <div ref={chatBottomRef} />
                   </div>
 
                   {/* Quick Suggestion Pills */}
