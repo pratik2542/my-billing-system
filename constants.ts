@@ -230,6 +230,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   enableGst: false,
   gstin: "",
   defaultGstRate: 12,
+  defaultTaxType: 'cgst_sgst',
   upiId: "",
   showUpiQr: false,
   enablePaymentTracking: true,

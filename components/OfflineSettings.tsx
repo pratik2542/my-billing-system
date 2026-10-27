@@ -1177,7 +1177,7 @@ export const OfflineSettings: React.FC<OfflineSettingsProps> = ({
                 </div>
 
                 {tempSettings.enableGst && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pl-8">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pl-8">
                     <div>
                       <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">GSTIN (Optional)</label>
                       <input
@@ -1195,6 +1195,17 @@ export const OfflineSettings: React.FC<OfflineSettingsProps> = ({
                         onChange={e => handleTempSettingsChange({ ...tempSettings, defaultGstRate: parseFloat(e.target.value) || 0 })}
                         className="w-full p-2.5 border border-slate-600 rounded-lg text-sm bg-slate-800 text-white font-bold outline-none focus:border-emerald-500"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Default Tax Type</label>
+                      <select
+                        value={tempSettings.defaultTaxType || 'cgst_sgst'}
+                        onChange={e => handleTempSettingsChange({ ...tempSettings, defaultTaxType: e.target.value as any })}
+                        className="w-full p-2.5 border border-slate-600 rounded-lg text-sm bg-slate-800 text-white font-bold outline-none focus:border-emerald-500"
+                      >
+                        <option value="cgst_sgst">CGST + SGST (Intra-state)</option>
+                        <option value="igst">IGST (Inter-state)</option>
+                      </select>
                     </div>
                   </div>
                 )}

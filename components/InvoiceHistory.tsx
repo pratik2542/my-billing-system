@@ -992,6 +992,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
                     billedBy={viewingInvoice.billedBy || viewingInvoice.createdByName}
                     createdByName={viewingInvoice.createdByName}
                     isDeleted={viewingInvoice.isDeleted}
+                    taxType={viewingInvoice.taxType}
                   />
                 </div>
               </div>

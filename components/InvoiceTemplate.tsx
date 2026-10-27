@@ -1,5 +1,5 @@
 import React from 'react';
-import { BusinessSettings, ColumnId, InvoiceItem, PaymentEntry } from '../types';
+import { BusinessSettings, ColumnId, InvoiceItem, PaymentEntry, TaxType } from '../types';
 import { getBillFontFamily, getEffectiveColumnOrder } from '../constants';
 
 interface InvoiceTemplateProps {
@@ -22,6 +22,7 @@ interface InvoiceTemplateProps {
   billedBy?: string;
   createdByName?: string;
   isDeleted?: boolean;
+  taxType?: TaxType;
 }
 
 // Helper to create lighter shades for backgrounds
@@ -95,7 +96,8 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   customTotalQtyText,
   billedBy,
   createdByName,
-  isDeleted
+  isDeleted,
+  taxType
 }) => {
   // Calculate financials (rounded to 2 decimals)
   const calcSubtotal = Math.round(items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0) * 100) / 100;
@@ -103,11 +105,33 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const isGstEnabled = settings.enableGst;
   // Use prop if available (for History view), else settings (for Generator view)
   const rate = propGstRate !== undefined ? propGstRate : (settings.defaultGstRate || 0);
+  const activeTaxType: TaxType = taxType || settings.defaultTaxType || 'cgst_sgst';
 
-  const halfRate = rate / 2;
-  const calcSgst = isGstEnabled ? Math.round(calcSubtotal * (halfRate / 100) * 100) / 100 : 0;
-  const calcCgst = isGstEnabled ? Math.round(calcSubtotal * (halfRate / 100) * 100) / 100 : 0;
-  const totalAmount = Math.round((calcSubtotal + calcSgst + calcCgst) * 100) / 100;
+  // Group items by tax rate for detailed slab breakdown
+  const taxSlabs = React.useMemo(() => {
+    if (!isGstEnabled) return [];
+    const map = new Map<number, { taxableAmount: number; taxAmount: number }>();
+    items.forEach(item => {
+      const itemRate = item.taxRate !== undefined ? item.taxRate : rate;
+      const amt = Number(item.amount) || 0;
+      const tax = Math.round(amt * (itemRate / 100) * 100) / 100;
+      const current = map.get(itemRate) || { taxableAmount: 0, taxAmount: 0 };
+      map.set(itemRate, {
+        taxableAmount: Math.round((current.taxableAmount + amt) * 100) / 100,
+        taxAmount: Math.round((current.taxAmount + tax) * 100) / 100,
+      });
+    });
+    return Array.from(map.entries())
+      .map(([slabRate, data]) => ({ rate: slabRate, ...data }))
+      .sort((a, b) => a.rate - b.rate);
+  }, [items, isGstEnabled, rate]);
+
+  const nonZeroSlabs = taxSlabs.filter(s => s.rate > 0);
+  const calcTotalTax = isGstEnabled
+    ? Math.round(taxSlabs.reduce((sum, s) => sum + s.taxAmount, 0) * 100) / 100
+    : 0;
+
+  const totalAmount = Math.round((calcSubtotal + calcTotalTax) * 100) / 100;
 
   // Payment status & totals
   const activePayments = (payments || []).filter(p => !p.isDeleted);
@@ -164,9 +188,11 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   }, [items]);
 
   // Ensure we have enough empty rows
-  // When GST is enabled, we have 3 extra footer rows (Subtotal, CGST, SGST), so fewer empty rows needed
-  // When GST is disabled, add more empty rows to fill the space
-  const minRows = isGstEnabled ? 5 : 7;
+  // Dynamic empty rows: calculate how many tax footer rows will appear so table never overflows
+  const taxRowsCount = isGstEnabled
+    ? (activeTaxType === 'igst' ? Math.max(1, nonZeroSlabs.length) : Math.max(2, nonZeroSlabs.length * 2)) + 1 // +1 for Subtotal
+    : 0;
+  const minRows = isGstEnabled ? Math.max(2, 7 - Math.max(0, taxRowsCount - 2)) : 7;
   const emptyRows = Math.max(0, minRows - items.length);
 
   const themeColor = settings.themeColor || '#dc2626';
@@ -226,7 +252,21 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
     particulars: {
       header: particularsHeader,
       widthClass: getColWidth('particulars', 'flex-1'),
-      renderCell: (item) => item.name,
+      renderCell: (item) => {
+        const itemTax = item.taxRate !== undefined ? item.taxRate : (isGstEnabled ? rate : undefined);
+        return (
+          <div className="flex flex-col min-w-0">
+            <span className="w-full break-words leading-snug">{item.name}</span>
+            {isGstEnabled && itemTax !== undefined && (
+              <span className="text-[10px] font-semibold text-slate-500 leading-tight">
+                {activeTaxType === 'igst'
+                  ? `IGST: ${itemTax}%`
+                  : `GST: ${itemTax}% (CGST ${itemTax / 2}% + SGST ${itemTax / 2}%)`}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     packing: {
       header: packingHeader,
@@ -497,8 +537,36 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             {isGstEnabled && (
               <>
                 {renderFooterRow('Subtotal', calcSubtotal, true)}
-                {renderFooterRow(`Add: CGST (${halfRate}%)`, calcCgst, false)}
-                {renderFooterRow(`Add: SGST (${halfRate}%)`, calcSgst, false)}
+                {activeTaxType === 'igst' ? (
+                  nonZeroSlabs.length === 0 ? (
+                    renderFooterRow('Add: IGST (0%)', 0, false)
+                  ) : (
+                    nonZeroSlabs.map(slab => (
+                      <React.Fragment key={`igst-${slab.rate}`}>
+                        {renderFooterRow(`Add: IGST (${slab.rate}%)`, slab.taxAmount, false)}
+                      </React.Fragment>
+                    ))
+                  )
+                ) : (
+                  // CGST + SGST (Intra-state)
+                  nonZeroSlabs.length === 0 ? (
+                    <>
+                      {renderFooterRow('Add: CGST (0%)', 0, false)}
+                      {renderFooterRow('Add: SGST (0%)', 0, false)}
+                    </>
+                  ) : (
+                    nonZeroSlabs.map(slab => {
+                      const sgst = Math.round(slab.taxAmount / 2 * 100) / 100;
+                      const cgst = Math.round((slab.taxAmount - sgst) * 100) / 100;
+                      return (
+                        <React.Fragment key={`cgst-sgst-${slab.rate}`}>
+                          {renderFooterRow(`Add: CGST (${slab.rate / 2}%)`, cgst, false)}
+                          {renderFooterRow(`Add: SGST (${slab.rate / 2}%)`, sgst, false)}
+                        </React.Fragment>
+                      );
+                    })
+                  )
+                )}
               </>
             )}
 

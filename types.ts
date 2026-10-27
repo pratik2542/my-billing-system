@@ -24,7 +24,10 @@ export interface InvoiceItem {
   rate: number;
   amount: number;
   packing?: string;
+  taxRate?: number; // Per-item tax rate (%) for GST/HST; overrides the global default when set
 }
+
+export type TaxType = 'cgst_sgst' | 'igst';
 
 export type ColumnId = 'sn' | 'particulars' | 'packing' | 'qty' | 'packingQty' | 'rate' | 'amount';
 
@@ -91,6 +94,7 @@ export interface BusinessSettings {
   gstin?: string;
   gstNo?: string;
   defaultGstRate?: number;
+  defaultTaxType?: TaxType; // 'cgst_sgst' (default) or 'igst'
   // UPI Settings
   upiId?: string;
   showUpiQr?: boolean;
@@ -181,6 +185,8 @@ export interface Invoice {
   gstRate?: number;
   sgstAmount?: number;
   cgstAmount?: number;
+  igstAmount?: number;
+  taxType?: TaxType; // 'cgst_sgst' (default) or 'igst'
   // Payment tracking
   payments?: PaymentEntry[];
   // Unit & Total quantity display customizations

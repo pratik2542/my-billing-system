@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X, CreditCard, CheckCircle2, Wallet, Banknote, FileDown } from 'lucide-react';
+import { Plus, Minus, Trash2, Printer, Save, Eye, FilePlus, Loader2, Edit, X, CreditCard, CheckCircle2, Wallet, Banknote, FileDown, Percent, RotateCcw } from 'lucide-react';
 import { InvoiceTemplate, formatBillNum, formatBillQty } from './InvoiceTemplate';
-import { Product, Customer, InvoiceItem, BusinessSettings, Invoice, PaymentMode, PaymentEntry } from '../types';
+import { Product, Customer, InvoiceItem, BusinessSettings, Invoice, PaymentMode, PaymentEntry, TaxType } from '../types';
 import { IS_ELECTRON, previewPdf } from '../electron-api';
 import { printInvoiceElement } from '../printHelper';
 
@@ -173,6 +173,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [customUnit, setCustomUnit] = useState<string>('');
   const [qty, setQty] = useState<number>(1);
   const [customRate, setCustomRate] = useState<string>(''); // Custom rate input
+  const [customTaxRate, setCustomTaxRate] = useState<string>(''); // Per-item tax rate input
+  const [taxType, setTaxType] = useState<TaxType>(editingInvoice?.taxType || settings.defaultTaxType || 'cgst_sgst'); // 'cgst_sgst' or 'igst'
   const [showPreviewMobile, setShowPreviewMobile] = useState(false); // Mobile tab state
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -193,6 +195,11 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       setItems(editingInvoice.items);
       if (editingInvoice.showUnitInItemsTable !== undefined) {
         setShowUnitInInvoice(editingInvoice.showUnitInItemsTable);
+      }
+      if (editingInvoice.taxType) {
+        setTaxType(editingInvoice.taxType);
+      } else if (settings.defaultTaxType) {
+        setTaxType(settings.defaultTaxType);
       }
       if (editingInvoice.customTotalQtyText !== undefined) {
         setCustomTotalQtyText(editingInvoice.customTotalQtyText);
@@ -315,12 +322,36 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const subtotal = Math.round(items.reduce((sum, i) => sum + (Number(i.amount) || 0), 0) * 100) / 100;
   const gstRate = settings.enableGst ? (settings.defaultGstRate || 0) : 0;
 
-  // Split GST into SGST and CGST
-  const halfRate = gstRate / 2;
-  const sgstAmount = settings.enableGst ? Math.round(subtotal * (halfRate / 100) * 100) / 100 : 0;
-  const cgstAmount = settings.enableGst ? Math.round(subtotal * (halfRate / 100) * 100) / 100 : 0;
+  // Group items by tax rate for detailed slab breakdown
+  const taxSlabs = React.useMemo(() => {
+    if (!settings.enableGst) return [];
+    const map = new Map<number, { taxableAmount: number; taxAmount: number }>();
+    items.forEach(item => {
+      const itemRate = item.taxRate !== undefined ? item.taxRate : gstRate;
+      const amt = Number(item.amount) || 0;
+      const tax = Math.round(amt * (itemRate / 100) * 100) / 100;
+      const current = map.get(itemRate) || { taxableAmount: 0, taxAmount: 0 };
+      map.set(itemRate, {
+        taxableAmount: Math.round((current.taxableAmount + amt) * 100) / 100,
+        taxAmount: Math.round((current.taxAmount + tax) * 100) / 100,
+      });
+    });
+    return Array.from(map.entries())
+      .map(([slabRate, data]) => ({ rate: slabRate, ...data }))
+      .sort((a, b) => a.rate - b.rate);
+  }, [items, settings.enableGst, gstRate]);
 
-  const totalTax = Math.round((sgstAmount + cgstAmount) * 100) / 100;
+  const nonZeroSlabs = taxSlabs.filter(s => s.rate > 0);
+  const totalTax = settings.enableGst
+    ? Math.round(taxSlabs.reduce((sum, s) => sum + s.taxAmount, 0) * 100) / 100
+    : 0;
+
+  // CGST, SGST, IGST calculations based on taxType
+  const halfRate = gstRate / 2;
+  const sgstAmount = settings.enableGst && taxType === 'cgst_sgst' ? Math.round(totalTax / 2 * 100) / 100 : 0;
+  const cgstAmount = settings.enableGst && taxType === 'cgst_sgst' ? Math.round((totalTax - sgstAmount) * 100) / 100 : 0;
+  const igstAmount = settings.enableGst && taxType === 'igst' ? totalTax : 0;
+
   const grandTotal = Math.round((subtotal + totalTax) * 100) / 100;
 
   // Sync paymentAmount with grandTotal if paymentType === 'full' and recordPayment is active
@@ -378,6 +409,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [editUnit, setEditUnit] = useState('');
   const [editQty, setEditQty] = useState<number>(1);
   const [editAmount, setEditAmount] = useState('');
+  const [editTaxRate, setEditTaxRate] = useState<string>('');
 
   const startEditItem = (item: InvoiceItem) => {
     setEditingItemId(item.id);
@@ -387,6 +419,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     setEditUnit(item.unit || 'Kg');
     setEditQty(item.quantity || 1);
     setEditAmount(item.amount !== undefined ? item.amount.toString() : (Math.round((item.quantity || 1) * (item.rate || 0) * 100) / 100).toString());
+    setEditTaxRate(item.taxRate !== undefined ? item.taxRate.toString() : '');
   };
 
   const saveEditItem = (id: string) => {
@@ -401,6 +434,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     const finalAmount = !isNaN(parsedAmount) && parsedAmount >= 0
       ? parsedAmount
       : Math.round(finalQty * finalRate * 100) / 100;
+    const parsedTaxRate = editTaxRate !== '' ? parseFloat(editTaxRate) : undefined;
+    const finalTaxRate = parsedTaxRate !== undefined && !isNaN(parsedTaxRate) ? parsedTaxRate : undefined;
 
     setItems(items.map(item => {
       if (item.id === id) {
@@ -411,7 +446,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           rate: finalRate,
           unit: finalUnit,
           quantity: finalQty,
-          amount: finalAmount
+          amount: finalAmount,
+          taxRate: finalTaxRate
         };
       }
       return item;
@@ -454,6 +490,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       };
       setItems(newItems);
     } else {
+      const parsedItemTaxRate = customTaxRate !== '' ? parseFloat(customTaxRate) : undefined;
+      const finalItemTaxRate = parsedItemTaxRate !== undefined && !isNaN(parsedItemTaxRate) ? parsedItemTaxRate : undefined;
       const newItem: InvoiceItem = {
         id: Date.now().toString(),
         productId: selectedProductID && selectedProductID !== 'CUSTOM' ? selectedProductID : `custom-${Date.now()}`,
@@ -462,7 +500,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         unit: unitToUse,
         rate: finalRate,
         amount: Math.round(finalQty * finalRate * 100) / 100,
-        packing: packingToUse
+        packing: packingToUse,
+        taxRate: finalItemTaxRate
       };
       setItems([...items, newItem]);
     }
@@ -472,6 +511,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     setCustomPacking('');
     setCustomRate('');
     setQty(1);
+    // Don't reset customTaxRate — user likely wants same rate for next item
     setIsSaved(false);
   };
 
@@ -511,6 +551,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     setPaymentMode('Cash');
     setPaymentNote('');
     setBilledBy(currentUserDisplayName || '');
+    setCustomTaxRate('');
+    setTaxType(settings.defaultTaxType || 'cgst_sgst');
   };
 
   const handleCustomerSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -582,8 +624,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       subtotal: subtotal,
       gstAmount: totalTax,
       gstRate: gstRate,
-      sgstAmount: sgstAmount,
-      cgstAmount: cgstAmount,
+      taxType: taxType,
+      sgstAmount: taxType === 'cgst_sgst' ? sgstAmount : 0,
+      cgstAmount: taxType === 'cgst_sgst' ? cgstAmount : 0,
+      igstAmount: taxType === 'igst' ? totalTax : 0,
       payments: initialPayments,
       showUnitInItemsTable: showUnitInInvoice,
       customTotalQtyText: isCustomTotalQtyEdited ? customTotalQtyText : undefined,
@@ -1058,7 +1102,110 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                     <Plus className="w-4 h-4" />
                   </button>
                 </div>
+
               </div>
+
+              {/* Per-item Tax Rate — only shown when GST/HST is enabled */}
+              {settings.enableGst && (
+                <div className="mt-2 pt-2 border-t border-slate-200/80 bg-white/80 p-2.5 rounded-lg border border-slate-200/70">
+                  {/* Row 1: Label + Status Pill + Reset button */}
+                  <div className="flex items-center justify-between text-xs mb-2">
+                    <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                      <Percent className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Tax Rate (GST)</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-all ${
+                        customTaxRate !== ''
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 border-slate-200'
+                      }`}>
+                        {customTaxRate !== '' ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            {customTaxRate}% Custom
+                          </>
+                        ) : (
+                          `${gstRate}% Default`
+                        )}
+                      </span>
+
+                      {customTaxRate !== '' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomTaxRate('');
+                            setIsSaved(false);
+                          }}
+                          disabled={isSaved}
+                          className="text-[11px] text-slate-500 hover:text-red-600 font-semibold flex items-center gap-1 bg-white border border-slate-200 hover:border-red-300 px-2 py-0.5 rounded-md cursor-pointer transition-colors shadow-2xs whitespace-nowrap"
+                          title="Reset to default tax rate"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Reset</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Row 2: Standard GST Slabs Segmented Control + Custom % Input */}
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex-1 grid grid-cols-5 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200 gap-0.5">
+                      {[0, 5, 12, 18, 28].map((rate) => {
+                        const isSelected = customTaxRate !== ''
+                          ? parseFloat(customTaxRate) === rate
+                          : gstRate === rate;
+                        return (
+                          <button
+                            key={rate}
+                            type="button"
+                            onClick={() => {
+                              if (customTaxRate !== '' && parseFloat(customTaxRate) === rate) {
+                                setCustomTaxRate('');
+                              } else {
+                                setCustomTaxRate(String(rate));
+                              }
+                              setIsSaved(false);
+                            }}
+                            disabled={isSaved}
+                            className={`py-1 text-xs font-bold rounded-md transition-all cursor-pointer text-center ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+                            }`}
+                            title={`Set tax rate to ${rate}%`}
+                          >
+                            {rate}%
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Custom Input */}
+                    <div className="relative shrink-0 w-20">
+                      <input
+                        type="number"
+                        value={customTaxRate}
+                        onChange={(e) => {
+                          setCustomTaxRate(e.target.value);
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        min="0"
+                        max="100"
+                        step="any"
+                        placeholder="Other"
+                        className="w-full h-8 pl-2 pr-5 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-right transition-colors"
+                        title="Enter custom tax rate percentage"
+                      />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 pointer-events-none">
+                        %
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1188,6 +1335,97 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                         />
                       </div>
                     </div>
+
+                    {/* Per-item Tax Rate in inline edit — only when GST enabled */}
+                    {settings.enableGst && (
+                      <div className="mt-2 pt-2 border-t border-blue-200/80 bg-white/85 p-2.5 rounded-lg border border-blue-200/60">
+                        {/* Row 1: Label + Status Pill + Reset button */}
+                        <div className="flex items-center justify-between text-xs mb-2">
+                          <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                            <Percent className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Tax Rate (GST)</span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-all ${
+                              editTaxRate !== ''
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                            }`}>
+                              {editTaxRate !== '' ? (
+                                <>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  {editTaxRate}% Custom
+                                </>
+                              ) : (
+                                `${gstRate}% Default`
+                              )}
+                            </span>
+
+                            {editTaxRate !== '' && (
+                              <button
+                                type="button"
+                                onClick={() => setEditTaxRate('')}
+                                className="text-[11px] text-slate-500 hover:text-red-600 font-semibold flex items-center gap-1 bg-white border border-slate-200 hover:border-red-300 px-2 py-0.5 rounded-md cursor-pointer transition-colors shadow-2xs whitespace-nowrap"
+                                title="Reset to default rate"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Reset</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Row 2: Standard GST Slabs Segmented Control + Custom % Input */}
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex-1 grid grid-cols-5 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200 gap-0.5">
+                            {[0, 5, 12, 18, 28].map((rate) => {
+                              const isSelected = editTaxRate !== ''
+                                ? parseFloat(editTaxRate) === rate
+                                : gstRate === rate;
+                              return (
+                                <button
+                                  key={rate}
+                                  type="button"
+                                  onClick={() => {
+                                    if (editTaxRate !== '' && parseFloat(editTaxRate) === rate) {
+                                      setEditTaxRate('');
+                                    } else {
+                                      setEditTaxRate(String(rate));
+                                    }
+                                  }}
+                                  className={`py-1 text-xs font-bold rounded-md transition-all cursor-pointer text-center ${
+                                    isSelected
+                                      ? 'bg-emerald-600 text-white shadow-xs'
+                                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+                                  }`}
+                                  title={`Set tax rate to ${rate}%`}
+                                >
+                                  {rate}%
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="relative shrink-0 w-20">
+                            <input
+                              type="number"
+                              value={editTaxRate}
+                              onChange={e => setEditTaxRate(e.target.value)}
+                              min="0"
+                              max="100"
+                              step="any"
+                              placeholder="Other"
+                              className="w-full h-8 pl-2 pr-5 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-lg outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-right transition-colors"
+                              title="Enter custom tax rate percentage"
+                            />
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 pointer-events-none">
+                              %
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   /* Standard Display Card */
@@ -1197,8 +1435,18 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                         <div className="font-bold text-slate-800 break-words leading-tight">
                           {idx + 1}. {item.name}
                         </div>
-                        <div className="text-slate-500 text-xs font-medium mt-0.5">
-                          {rateLabel}: ₹{formatBillNum(item.rate)} | {qtyLabel}: {formatBillQty(item.quantity)}{item.unit ? ` ${item.unit}` : ''}
+                        <div className="text-slate-500 text-xs font-medium mt-0.5 flex items-center gap-2 flex-wrap">
+                          <span>{rateLabel}: ₹{formatBillNum(item.rate)} | {qtyLabel}: {formatBillQty(item.quantity)}{item.unit ? ` ${item.unit}` : ''}</span>
+                          {settings.enableGst && (
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              item.taxRate !== undefined && item.taxRate !== gstRate
+                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                                : 'bg-slate-100 text-slate-500 border border-slate-200'
+                            }`}>
+                              Tax: {item.taxRate !== undefined ? item.taxRate : gstRate}%
+                              {item.taxRate !== undefined && item.taxRate !== gstRate && <span className="ml-1 text-emerald-600">★</span>}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1377,20 +1625,95 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           {/* Live Totals in Controls */}
           {items.length > 0 && (
             <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
+              {/* GST Tax Type Toggle (CGST + SGST vs IGST) */}
+              {settings.enableGst && (
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-700 bg-white p-2 rounded-lg border border-slate-200 mb-2.5 shadow-2xs">
+                  <span className="text-[11px] font-bold text-slate-600">Tax Type:</span>
+                  <div className="inline-flex rounded-md p-0.5 bg-slate-100 border border-slate-200 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => { setTaxType('cgst_sgst'); setIsSaved(false); }}
+                      className={`px-2 py-0.5 text-[11px] font-bold rounded cursor-pointer transition-all ${
+                        taxType === 'cgst_sgst' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="Intra-State: Split tax into CGST and SGST"
+                    >
+                      CGST + SGST
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setTaxType('igst'); setIsSaved(false); }}
+                      className={`px-2 py-0.5 text-[11px] font-bold rounded cursor-pointer transition-all ${
+                        taxType === 'igst' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="Inter-State: Integrated GST for out-of-state sales"
+                    >
+                      IGST
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {settings.enableGst && (
                 <>
                   <div className="flex justify-between text-sm text-slate-600 mb-1">
                     <span>Subtotal:</span>
                     <span>₹{formatBillNum(subtotal)}</span>
                   </div>
-                  <div className="flex justify-between text-sm text-slate-600 mb-1">
-                    <span>CGST ({halfRate}%):</span>
-                    <span>₹{formatBillNum(cgstAmount)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
-                    <span>SGST ({halfRate}%):</span>
-                    <span>₹{formatBillNum(sgstAmount)}</span>
-                  </div>
+
+                  {taxType === 'igst' ? (
+                    // IGST per-slab breakdown
+                    nonZeroSlabs.length === 0 ? (
+                      <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
+                        <span>IGST (0%):</span>
+                        <span>₹0</span>
+                      </div>
+                    ) : (
+                      nonZeroSlabs.map((slab, i) => (
+                        <div
+                          key={`igst-live-${slab.rate}`}
+                          className={`flex justify-between text-sm text-slate-600 mb-1 ${
+                            i === nonZeroSlabs.length - 1 ? 'border-b border-dashed border-slate-300 pb-1' : ''
+                          }`}
+                        >
+                          <span>IGST ({slab.rate}%):</span>
+                          <span>₹{formatBillNum(slab.taxAmount)}</span>
+                        </div>
+                      ))
+                    )
+                  ) : (
+                    // CGST + SGST per-slab breakdown
+                    nonZeroSlabs.length === 0 ? (
+                      <>
+                        <div className="flex justify-between text-sm text-slate-600 mb-1">
+                          <span>CGST (0%):</span>
+                          <span>₹0</span>
+                        </div>
+                        <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
+                          <span>SGST (0%):</span>
+                          <span>₹0</span>
+                        </div>
+                      </>
+                    ) : (
+                      nonZeroSlabs.map((slab, i) => {
+                        const sgst = Math.round(slab.taxAmount / 2 * 100) / 100;
+                        const cgst = Math.round((slab.taxAmount - sgst) * 100) / 100;
+                        const isLast = i === nonZeroSlabs.length - 1;
+                        return (
+                          <React.Fragment key={`cgst-sgst-live-${slab.rate}`}>
+                            <div className="flex justify-between text-sm text-slate-600 mb-1">
+                              <span>CGST ({slab.rate / 2}%):</span>
+                              <span>₹{formatBillNum(cgst)}</span>
+                            </div>
+                            <div className={`flex justify-between text-sm text-slate-600 mb-1 ${isLast ? 'border-b border-dashed border-slate-300 pb-1' : ''}`}>
+                              <span>SGST ({slab.rate / 2}%):</span>
+                              <span>₹{formatBillNum(sgst)}</span>
+                            </div>
+                          </React.Fragment>
+                        );
+                      })
+                    )
+                  )}
                 </>
               )}
               <div className="flex justify-between font-bold text-lg text-slate-900 mt-1">
@@ -1666,6 +1989,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             billedBy={billedBy || currentUserDisplayName}
             createdByName={editingInvoice?.createdByName || currentUserDisplayName}
             isDeleted={editingInvoice?.isDeleted}
+            taxType={taxType}
           />
         </div>
       </div>
@@ -1688,6 +2012,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             billedBy={billedBy || currentUserDisplayName}
             createdByName={editingInvoice?.createdByName || currentUserDisplayName}
             isDeleted={editingInvoice?.isDeleted}
+            taxType={taxType}
           />
         </div>
       </div>
