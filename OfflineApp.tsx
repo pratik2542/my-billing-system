@@ -1008,6 +1008,13 @@ const OfflineAppShell: React.FC<{
               setPaymentInvoice(inv);
             }}
             enablePaymentTracking={features.enablePaymentTracking}
+            csvImportAllowed={features.enableCsvImport}
+            onImportInvoices={async (importedInvoices) => {
+              for (const inv of importedInvoices) {
+                await data.saveInvoice(inv);
+              }
+              await data.refreshAll();
+            }}
           />
         );
       case AppTab.ANALYTICS: {

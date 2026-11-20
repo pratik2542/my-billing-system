@@ -72,10 +72,10 @@
 ; ─── Uninstaller ─────────────────────────────────────────────────────────────
 !macro customUnInstall
   MessageBox MB_ICONQUESTION|MB_YESNO \
-    "Do you want to remove all Billing System data and backups?$\n$\n(Select NO to keep your data for reinstallation)" \
+    "Do you want to reset and remove the Billing System database?$\n$\n(Your backups in Documents\BillingBackups will be preserved. Select NO to keep data for reinstallation)" \
     IDNO keep_data
     
-  RMDir /r "$APPDATA\BillingSystem"
+  RMDir /r "$APPDATA\universal-billing-system"
   keep_data:
   
   DeleteRegKey HKCU "Software\BillingSystem"
