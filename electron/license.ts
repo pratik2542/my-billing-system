@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import child_process from 'child_process';
 import { app } from 'electron';
 import { machineIdSync } from 'node-machine-id';
 
@@ -16,14 +17,60 @@ export const MASTER_PUBLIC_KEY_HEX =
 // ─── Hardware Fingerprint ─────────────────────────────────────────────────────
 // Uses the permanent, offline OS MachineGuid from Windows Registry / DBus machine-id.
 // It is 100% stable across reboots, sleep cycles, network/Wi-Fi changes, and offline use.
-export function getHardwareFingerprint(): string {
+function getRawWindowsMachineId(): string {
+  // Tier 1: node-machine-id (reads HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid)
   try {
-    const machineId = machineIdSync(true);
-    return crypto.createHash('sha256').update(machineId.toLowerCase().trim()).digest('hex');
-  } catch (e) {
-    const fallback = (os.hostname() || 'offline-pc').trim().toLowerCase();
-    return crypto.createHash('sha256').update(fallback).digest('hex');
+    const id = machineIdSync(true);
+    if (id && id.trim().length >= 16) {
+      return id.trim().toLowerCase();
+    }
+  } catch {}
+
+  // Tier 2: Direct reg.exe query fallback
+  if (process.platform === 'win32') {
+    try {
+      const stdout = child_process.execSync(
+        '%windir%\\System32\\reg.exe query HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography /v MachineGuid',
+        { encoding: 'utf8', timeout: 3000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }
+      );
+      const match = stdout.match(/MachineGuid\s+REG_SZ\s+([A-Fa-f0-9\-]+)/i);
+      if (match && match[1]) {
+        return match[1].trim().toLowerCase();
+      }
+    } catch {}
+
+    // Tier 3: PowerShell registry query fallback
+    try {
+      const stdout = child_process.execSync(
+        'powershell.exe -NoProfile -NonInteractive -Command "(Get-ItemProperty -Path \'Registry::HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\').MachineGuid"',
+        { encoding: 'utf8', timeout: 4000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }
+      );
+      const clean = stdout.trim().toLowerCase();
+      if (clean && clean.length >= 16) {
+        return clean;
+      }
+    } catch {}
+
+    // Tier 4: Motherboard / BIOS UUID fallback
+    try {
+      const stdout = child_process.execSync(
+        'powershell.exe -NoProfile -NonInteractive -Command "(Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID"',
+        { encoding: 'utf8', timeout: 4000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }
+      );
+      const clean = stdout.trim().toLowerCase();
+      if (clean && clean.length >= 16 && clean !== 'ffffffff-ffff-ffff-ffff-ffffffffffff') {
+        return clean;
+      }
+    } catch {}
   }
+
+  // Tier 5: Hostname fallback (never fails)
+  return (os.hostname() || 'offline-pc').trim().toLowerCase();
+}
+
+export function getHardwareFingerprint(): string {
+  const rawId = getRawWindowsMachineId();
+  return crypto.createHash('sha256').update(rawId).digest('hex');
 }
 
 // Legacy fallback: for licenses issued with network MAC interface concatenation
