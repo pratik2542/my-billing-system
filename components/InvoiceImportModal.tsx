@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Invoice, InvoiceItem } from '../types';
+import { Invoice, InvoiceItem, PaymentEntry } from '../types';
 import { Upload, X, FileText, CheckCircle2, AlertTriangle, Download, Loader2 } from 'lucide-react';
 
 interface InvoiceImportModalProps {
@@ -16,10 +16,10 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
 
   const downloadSampleCSV = () => {
     const csvContent = [
-      'Bill No,Date,Customer Name,Customer City,Customer Mobile,Item Name,Quantity,Unit,Rate,Amount,Packing',
-      '1001,15/08/2026,Rajesh Patel,Ahmedabad,9876543210,Guchda Sev,2,kg,250,500,1 kg',
-      '1001,15/08/2026,Rajesh Patel,Ahmedabad,9876543210,Nylon Pauva,1,kg,150,150,1 kg',
-      '1002,16/08/2026,Mehta Traders,Surat,9123456789,Special Mix,5,kg,200,1000,500 gm'
+      'Bill No,Date,Customer Name,Customer City,Customer Mobile,Item Name,Quantity,Unit,Rate,Amount,Packing,Paid Amount,Payment Status',
+      '1001,15/08/2026,Rajesh Patel,Ahmedabad,9876543210,Guchda Sev,2,kg,250,500,1 kg,650,Paid',
+      '1001,15/08/2026,Rajesh Patel,Ahmedabad,9876543210,Nylon Pauva,1,kg,150,150,1 kg,650,Paid',
+      '1002,16/08/2026,Mehta Traders,Surat,9123456789,Special Mix,5,kg,200,1000,500 gm,0,Unpaid'
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -81,6 +81,8 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
     const amountIdx = findIdx(['amount', 'totalitem']);
     const packingIdx = findIdx(['packing']);
     const totalIdx = findIdx(['total', 'totalamount', 'billtotal', 'grandtotal']);
+    const paidAmountIdx = findIdx(['paidamount', 'amountpaid', 'paidamt', 'paymentamount']);
+    const paymentStatusIdx = findIdx(['paymentstatus', 'status', 'paystatus']);
 
     const invMap: Record<string, Invoice> = {};
     const parseErrors: string[] = [];
@@ -138,6 +140,23 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
       const customerCity = (cityIdx >= 0 && row[cityIdx]) ? row[cityIdx] : 'Local';
       const customerMobile = (mobileIdx >= 0 && row[mobileIdx]) ? row[mobileIdx] : '';
       const rowTotal = (totalIdx >= 0 && row[totalIdx]) ? (parseFloat(row[totalIdx]) || 0) : 0;
+      const rawPaidAmount = (paidAmountIdx >= 0 && row[paidAmountIdx]) ? parseFloat(row[paidAmountIdx]) : undefined;
+      const rawStatus = (paymentStatusIdx >= 0 && row[paymentStatusIdx]) ? row[paymentStatusIdx].trim().toLowerCase() : '';
+
+      let initialPayment: PaymentEntry[] = [];
+      const hasExplicitPaid = rawPaidAmount !== undefined && !isNaN(rawPaidAmount) && rawPaidAmount > 0;
+      const isMarkedPaid = rawStatus === 'paid';
+      const effectivePaid = hasExplicitPaid ? rawPaidAmount! : (isMarkedPaid ? (rowTotal || 0) : 0);
+
+      if (effectivePaid > 0) {
+        initialPayment = [{
+          id: `p_imp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          amount: effectivePaid,
+          mode: 'Cash',
+          date: date,
+          note: 'Imported from CSV'
+        }];
+      }
       
       const key = `${rawBillNo}_${customerName}`.toLowerCase();
 
@@ -149,10 +168,16 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
           customerCity,
           customerMobile,
           items: [],
-          total: rowTotal
+          total: rowTotal,
+          payments: initialPayment.length > 0 ? initialPayment : undefined
         };
-      } else if (rowTotal > 0) {
-        invMap[key].total = rowTotal;
+      } else {
+        if (rowTotal > 0) {
+          invMap[key].total = rowTotal;
+        }
+        if (initialPayment.length > 0 && (!invMap[key].payments || invMap[key].payments!.length === 0)) {
+          invMap[key].payments = initialPayment;
+        }
       }
 
       // Check if row has an Items summary string (Exported CSV format)
@@ -193,6 +218,11 @@ export const InvoiceImportModal: React.FC<InvoiceImportModalProps> = ({ onClose,
     }
 
     const invoiceList = Object.values(invMap);
+    for (const inv of invoiceList) {
+      if (inv.payments && inv.payments.length > 0 && inv.payments[0].amount <= 0 && inv.total > 0) {
+        inv.payments[0].amount = inv.total;
+      }
+    }
     if (invoiceList.length === 0) {
       parseErrors.push('No valid invoice records could be extracted from the file.');
     }

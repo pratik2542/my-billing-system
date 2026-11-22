@@ -279,7 +279,7 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
   const handleExportCSV = () => {
     if (filteredInvoices.length === 0) return;
 
-    const headers = ['Bill No', 'Date', 'Customer Name', 'City', 'Mobile', 'Items', 'Total Amount'];
+    const headers = ['Bill No', 'Date', 'Customer Name', 'City', 'Mobile', 'Items', 'Total Amount', 'Paid Amount', 'Payment Status'];
     const csvContent = [
       headers.join(','),
       ...filteredInvoices.map(inv => {
@@ -287,6 +287,10 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
         const itemsString = inv.items.map(item => 
           `${item.name}${item.packing ? ` ${item.packing}` : ''} (${item.quantity} ${item.unit})`
         ).join(', ');
+
+        const activePayments = (inv.payments || []).filter(p => !p.isDeleted);
+        const paidAmount = activePayments.reduce((s, p) => s + p.amount, 0);
+        const status = paidAmount >= inv.total - 0.01 ? 'Paid' : (paidAmount > 0 ? 'Partial' : 'Unpaid');
         
         return [
           inv.id,
@@ -295,7 +299,9 @@ export const InvoiceHistory: React.FC<InvoiceHistoryProps> = ({
           `"${(inv.customerCity || '').replace(/"/g, '""')}"`,
           `"${(inv.customerMobile || '').replace(/"/g, '""')}"`,
           `"${itemsString.replace(/"/g, '""')}"`, // Escape quotes in items
-          inv.total
+          inv.total,
+          paidAmount,
+          status
         ].join(',');
       })
     ].join('\n');
