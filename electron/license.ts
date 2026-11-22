@@ -14,10 +14,22 @@ export const MASTER_PUBLIC_KEY_HEX =
   '302a300506032b65700321001ea055548929dcea67c254133bc2ba295d7aeb4ee9bedb3bb4d3d5f67b825a22';
 
 // ─── Hardware Fingerprint ─────────────────────────────────────────────────────
+// Uses the permanent, offline OS MachineGuid from Windows Registry / DBus machine-id.
+// It is 100% stable across reboots, sleep cycles, network/Wi-Fi changes, and offline use.
 export function getHardwareFingerprint(): string {
   try {
-    // Combine machine-id + network interface MAC addresses
-    const machineId = machineIdSync(true); // hashed
+    const machineId = machineIdSync(true);
+    return crypto.createHash('sha256').update(machineId.toLowerCase().trim()).digest('hex');
+  } catch (e) {
+    const fallback = (os.hostname() || 'offline-pc').trim().toLowerCase();
+    return crypto.createHash('sha256').update(fallback).digest('hex');
+  }
+}
+
+// Legacy fallback: for licenses issued with network MAC interface concatenation
+export function getLegacyHardwareFingerprint(): string | null {
+  try {
+    const machineId = machineIdSync(true);
     const nets = os.networkInterfaces();
     const macs: string[] = [];
 
@@ -32,10 +44,8 @@ export function getHardwareFingerprint(): string {
 
     const combined = `${machineId}|${macs.sort().join(',')}|${os.hostname()}`;
     return crypto.createHash('sha256').update(combined).digest('hex');
-  } catch (e) {
-    // Fallback: use only machine-id
-    const machineId = machineIdSync(true);
-    return crypto.createHash('sha256').update(machineId).digest('hex');
+  } catch {
+    return null;
   }
 }
 
@@ -86,7 +96,12 @@ export function validateLicense(licenseKey: string): LicenseValidationResult {
 
     // Check hardware fingerprint lock
     const currentFingerprint = getHardwareFingerprint();
-    if (payload.fingerprint.toLowerCase() !== currentFingerprint.toLowerCase()) {
+    const legacyFingerprint = getLegacyHardwareFingerprint();
+    const isMatch =
+      payload.fingerprint.toLowerCase() === currentFingerprint.toLowerCase() ||
+      (legacyFingerprint && payload.fingerprint.toLowerCase() === legacyFingerprint.toLowerCase());
+
+    if (!isMatch) {
       return { valid: false, error: 'License is locked to a different computer hardware.' };
     }
 
