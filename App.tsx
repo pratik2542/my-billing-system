@@ -2760,7 +2760,14 @@ const compressImageToMaxDataUrl = (
 
                               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 text-center">Live Header Preview (Actual Size)</div>
                               <div className="overflow-x-auto no-scrollbar border-2 bg-white shadow-lg rounded-xl" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
-                                <div className="min-w-[794px] border-b-2 p-4 font-serif-custom text-center relative" style={{ color: tempSettings.themeColor || '#dc2626', borderColor: tempSettings.themeColor || '#dc2626' }}>
+                                <div
+                                  className={`min-w-[794px] border-b-2 p-4 text-center relative ${tempSettings.billFontScope !== 'entire_bill' ? 'font-serif-custom' : ''}`}
+                                  style={{
+                                    color: tempSettings.themeColor || '#dc2626',
+                                    borderColor: tempSettings.themeColor || '#dc2626',
+                                    fontFamily: tempSettings.billFontScope === 'entire_bill' ? getBillFontFamily(tempSettings.billFont) : undefined
+                                  }}
+                                >
                                   <img
                                     src={tempSettings.logoUrl}
                                     alt="Logo"

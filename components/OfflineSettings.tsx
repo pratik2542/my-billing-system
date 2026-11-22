@@ -405,7 +405,12 @@ export const OfflineSettings: React.FC<OfflineSettingsProps> = ({
                     Live Header Preview (Matches Printed Bill)
                   </div>
                   <div className="overflow-x-auto border-2 bg-white rounded-xl p-4 text-center relative shadow-lg" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
-                    <div className="min-w-[700px] relative">
+                    <div
+                      className={`min-w-[700px] relative ${tempSettings.billFontScope !== 'entire_bill' ? 'font-serif-custom' : ''}`}
+                      style={{
+                        fontFamily: tempSettings.billFontScope === 'entire_bill' ? getBillFontFamily(tempSettings.billFont) : undefined
+                      }}
+                    >
                       <img
                         src={tempSettings.logoUrl}
                         alt="Logo"
@@ -724,7 +729,7 @@ export const OfflineSettings: React.FC<OfflineSettingsProps> = ({
                     }}
                   >
                     <div className="text-center pb-2 border-b" style={{ borderColor: tempSettings.themeColor || '#dc2626' }}>
-                      <div className="font-bold text-sm" style={{ color: tempSettings.themeColor || '#dc2626' }}>
+                      <div className={`font-bold text-sm ${tempSettings.billFontScope !== 'entire_bill' ? 'font-serif-custom' : ''}`} style={{ color: tempSettings.themeColor || '#dc2626' }}>
                         {tempSettings.name || 'PRINT WORKS'}
                       </div>
                     </div>
