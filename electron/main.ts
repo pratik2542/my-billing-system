@@ -431,6 +431,24 @@ ipcMain.handle('app:restoreFocus', () => {
   return true;
 });
 
+ipcMain.on('dialog:confirmSync', (event, message) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    event.returnValue = true;
+    return;
+  }
+  const choice = dialog.showMessageBoxSync(mainWindow, {
+    type: 'question',
+    buttons: ['Cancel', 'OK'],
+    defaultId: 1,
+    cancelId: 0,
+    title: 'Confirm',
+    message: String(message || ''),
+  });
+  mainWindow.webContents.focus();
+  mainWindow.focus();
+  event.returnValue = (choice === 1);
+});
+
 ipcMain.handle('print:prepare', async () => {
   if (mainWindow) {
     mainWindow.setBackgroundColor('#ffffff');

@@ -86,6 +86,8 @@ const electronAPI = {
     ipcRenderer.invoke('app:openExternal', url),
   restoreFocus: (): Promise<boolean> =>
     ipcRenderer.invoke('app:restoreFocus'),
+  confirmSync: (message: string): boolean =>
+    ipcRenderer.sendSync('dialog:confirmSync', message),
 
   // ── Print & PDF Preview ───────────────────────────────────────────────────
   previewPdf: (title?: string, elementId?: string): Promise<{ success: boolean; filePath?: string; error?: string }> =>

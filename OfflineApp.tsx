@@ -35,7 +35,7 @@ import {
 } from './types';
 import { DEFAULT_BUSINESS_SETTINGS, DEFAULT_PRODUCT_UNITS } from './constants';
 import {
-  Package, PackagePlus, Users, UserPlus, Search, Edit, Trash, PlusCircle, Save, X, BarChart3, MapPin, Phone, PhoneCall, User as UserIcon, Shield
+  Package, PackagePlus, Users, UserPlus, Search, Edit, Trash, PlusCircle, Save, X, BarChart3, MapPin, Phone, PhoneCall, User as UserIcon, Shield, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 
 import { InvoiceGenerator } from './components/InvoiceGenerator';
@@ -433,27 +433,81 @@ const OfflineAppShell: React.FC<{
   const [showCustomerFormMobile, setShowCustomerFormMobile] = useState(false);
   const customerFormRef = useRef<HTMLDivElement>(null);
 
+  // ── Global In-App Toast & Confirmation Modal (replaces native alert/confirm to prevent Electron focus drops) ──
+  const [toast, setToast] = useState<{ message: string; type?: 'success' | 'error' | 'info' } | null>(null);
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    confirmStyle?: 'danger' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
+
+  const showConfirm = useCallback((
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    confirmStyle: 'danger' | 'primary' = 'danger',
+    confirmText = 'Confirm'
+  ) => {
+    setConfirmModal({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      confirmStyle,
+      onConfirm: () => {
+        setConfirmModal(null);
+        onConfirm();
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (e.detail?.message) {
+        showToast(e.detail.message, e.detail.type || 'info');
+      }
+    };
+    window.addEventListener('app-global-toast', handler);
+    return () => window.removeEventListener('app-global-toast', handler);
+  }, [showToast]);
+
   // --- Backup Handlers ---
   const handleCreateBackup = async () => {
     const result = await createBackup();
     setBackupMsg(result.success ? `✅ Backup created: ${result.filePath}` : `❌ ${result.error}`);
     const list = await listBackups();
     setBackupList(list);
+    if (result.success) {
+      showToast('Backup created successfully!');
+    } else {
+      showToast(result.error || 'Backup creation failed', 'error');
+    }
   };
 
-  const handleRestoreBackup = async (filePath: string) => {
-    if (!window.confirm('⚠️ This will replace ALL current data with the backup. Continue?')) return;
-    const result = await restoreBackup(filePath);
-    if (result.success) {
-      setBackupMsg('✅ Restored successfully. Reloading data...');
-      await data.refreshAll();
-      const session = await userGetSession();
-      if (session) {
-        onUserUpdated(session);
+  const handleRestoreBackup = (filePath: string) => {
+    showConfirm('Restore Backup', '⚠️ This will replace ALL current data with the backup. Continue?', async () => {
+      const result = await restoreBackup(filePath);
+      if (result.success) {
+        setBackupMsg('✅ Restored successfully. Reloading data...');
+        showToast('Backup restored successfully!');
+        await data.refreshAll();
+        const session = await userGetSession();
+        if (session) {
+          onUserUpdated(session);
+        }
+      } else {
+        setBackupMsg(`❌ Restore failed: ${result.error}`);
+        showToast(`Restore failed: ${result.error}`, 'error');
       }
-    } else {
-      setBackupMsg(`❌ Restore failed: ${result.error}`);
-    }
+    });
   };
 
   const handleCloudImport = async () => {
@@ -461,14 +515,14 @@ const OfflineAppShell: React.FC<{
     if (!filePath) return;
     const result = await importCloudExport(filePath);
     if (result.success) {
-      alert(`✅ Import successful!\nInvoices: ${result.counts?.invoices || 0}\nProducts: ${result.counts?.products || 0}\nCustomers: ${result.counts?.customers || 0}\n\nRefreshing data...`);
+      showToast(`Import successful! Invoices: ${result.counts?.invoices || 0}, Products: ${result.counts?.products || 0}, Customers: ${result.counts?.customers || 0}`);
       await data.refreshAll();
       const session = await userGetSession();
       if (session) {
         onUserUpdated(session);
       }
     } else {
-      alert(`❌ Import failed: ${result.error}`);
+      showToast(`Import failed: ${result.error}`, 'error');
     }
   };
 
@@ -540,9 +594,11 @@ const OfflineAppShell: React.FC<{
     e.preventDefault();
     if (!prodForm.name.trim()) return;
     try {
+      const isEdit = !!editingProductId;
+      const prodName = prodForm.name.trim();
       const prod: Product = {
         id: editingProductId || `prod_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        name: prodForm.name.trim(),
+        name: prodName,
         packing: prodForm.packing.trim(),
         rate: prodForm.rate ? Number(prodForm.rate) : 0,
         unit: prodForm.unit || getDefaultUnit(data.settings)
@@ -550,9 +606,10 @@ const OfflineAppShell: React.FC<{
       await data.saveProduct(prod, currentUser);
       setEditingProductId(null);
       setProdForm({ name: '', packing: '', rate: '', unit: getDefaultUnit(data.settings) });
+      showToast(isEdit ? `Product "${prodName}" updated successfully!` : `Product "${prodName}" added to catalog!`);
     } catch (e) {
       console.error("Error saving product: ", e);
-      alert("Failed to save product.");
+      showToast("Failed to save product.", "error");
     }
   };
 
@@ -574,39 +631,51 @@ const OfflineAppShell: React.FC<{
     setEditingProductId(null);
   };
 
-  const deleteProduct = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this product?")) return;
-    try {
-      await data.removeProduct(id, currentUser);
-      if (editingProductId === id) cancelEditProduct();
-      setSelectedProductIds(prev => { const s = new Set(prev); s.delete(id); return s; });
-    } catch (e) {
-      console.error("Error deleting product:", e);
-    }
-  };
-
-  const bulkDeleteProducts = async () => {
-    if (selectedProductIds.size === 0) return;
-    if (!window.confirm(`Delete ${selectedProductIds.size} selected product(s)? This cannot be undone.`)) return;
-    for (const id of selectedProductIds) {
-      try { await data.removeProduct(id, currentUser); } catch (e) { console.error('Bulk delete product error:', e); }
-    }
-    setSelectedProductIds(new Set());
-    if (editingProductId && selectedProductIds.has(editingProductId)) cancelEditProduct();
-  };
-
-  const handleSaveAllUnsavedProducts = async () => {
-    if (!window.confirm(`Save all ${unsavedInvoiceProducts.length} unsaved products to your catalog?`)) return;
-    for (const u of unsavedInvoiceProducts) {
+  const deleteProduct = (id: string) => {
+    const prod = data.products.find(p => p.id === id);
+    const prodName = prod?.name ? `"${prod.name}"` : 'this product';
+    showConfirm('Delete Product', `Are you sure you want to delete ${prodName}?`, async () => {
       try {
-        const prod: Product = {
-          id: `prod_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          name: u.name.trim(), rate: Number(u.rate) || 0,
-          unit: u.unit || getDefaultUnit(data.settings), packing: u.packing || ''
-        };
-        await data.saveProduct(prod, currentUser);
-      } catch (e) { console.error('Bulk save product error:', e); }
-    }
+        await data.removeProduct(id, currentUser);
+        if (editingProductId === id) cancelEditProduct();
+        setSelectedProductIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+        showToast(`Product ${prodName} deleted.`);
+      } catch (e) {
+        console.error("Error deleting product:", e);
+        showToast("Failed to delete product.", "error");
+      }
+    });
+  };
+
+  const bulkDeleteProducts = () => {
+    if (selectedProductIds.size === 0) return;
+    const count = selectedProductIds.size;
+    showConfirm('Delete Selected Products', `Delete ${count} selected product(s)? This cannot be undone.`, async () => {
+      for (const id of selectedProductIds) {
+        try { await data.removeProduct(id, currentUser); } catch (e) { console.error('Bulk delete product error:', e); }
+      }
+      setSelectedProductIds(new Set());
+      if (editingProductId && selectedProductIds.has(editingProductId)) cancelEditProduct();
+      showToast(`${count} products deleted.`);
+    });
+  };
+
+  const handleSaveAllUnsavedProducts = () => {
+    const count = unsavedInvoiceProducts.length;
+    if (count === 0) return;
+    showConfirm('Save All Products', `Save all ${count} unsaved products to your catalog?`, async () => {
+      for (const u of unsavedInvoiceProducts) {
+        try {
+          const prod: Product = {
+            id: `prod_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            name: u.name.trim(), rate: Number(u.rate) || 0,
+            unit: u.unit || getDefaultUnit(data.settings), packing: u.packing || ''
+          };
+          await data.saveProduct(prod, currentUser);
+        } catch (e) { console.error('Bulk save product error:', e); }
+      }
+      showToast(`All ${count} products saved to catalog!`);
+    }, 'primary', 'Save All');
   };
 
   const handleQuickSaveProduct = async (name: string, rate: number, unit: string, packing: string = '') => {
@@ -620,10 +689,10 @@ const OfflineAppShell: React.FC<{
         packing: packing ? packing.trim() : ''
       };
       await data.saveProduct(prod, currentUser);
-      alert(`Product "${name.trim()}" saved to your product catalog!`);
+      showToast(`Product "${name.trim()}" saved to your product catalog!`);
     } catch (e) {
       console.error("Error quick-saving product:", e);
-      alert(`Failed to save product "${name}".`);
+      showToast(`Failed to save product "${name}".`, "error");
     }
   };
 
@@ -685,9 +754,11 @@ const OfflineAppShell: React.FC<{
     e.preventDefault();
     if (!custForm.name.trim()) return;
     try {
+      const isEdit = !!editingCustomerId;
+      const custName = custForm.name.trim();
       const cust: Customer = {
         id: editingCustomerId || `cust_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        name: custForm.name.trim(),
+        name: custName,
         city: custForm.city.trim(),
         phone: custForm.phone.trim()
       };
@@ -695,9 +766,10 @@ const OfflineAppShell: React.FC<{
       setEditingCustomerId(null);
       setCustForm({ name: '', city: '', phone: '' });
       setShowCustomerFormMobile(false);
+      showToast(isEdit ? `Customer "${custName}" updated successfully!` : `Customer "${custName}" added to directory!`);
     } catch (e) {
       console.error("Error saving customer:", e);
-      alert("Failed to save customer.");
+      showToast("Failed to save customer.", "error");
     }
   };
 
@@ -718,38 +790,50 @@ const OfflineAppShell: React.FC<{
     setEditingCustomerId(null);
   };
 
-  const deleteCustomer = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this customer?")) return;
-    try {
-      await data.removeCustomer(id, currentUser);
-      if (editingCustomerId === id) cancelEditCustomer();
-      setSelectedCustomerIds(prev => { const s = new Set(prev); s.delete(id); return s; });
-    } catch (e) {
-      console.error("Error deleting customer:", e);
-    }
-  };
-
-  const bulkDeleteCustomers = async () => {
-    if (selectedCustomerIds.size === 0) return;
-    if (!window.confirm(`Delete ${selectedCustomerIds.size} selected customer(s)? This cannot be undone.`)) return;
-    for (const id of selectedCustomerIds) {
-      try { await data.removeCustomer(id, currentUser); } catch (e) { console.error('Bulk delete customer error:', e); }
-    }
-    setSelectedCustomerIds(new Set());
-    if (editingCustomerId && selectedCustomerIds.has(editingCustomerId)) cancelEditCustomer();
-  };
-
-  const handleSaveAllUnsavedCustomers = async () => {
-    if (!window.confirm(`Save all ${unsavedInvoiceCustomers.length} unsaved customers to your directory?`)) return;
-    for (const u of unsavedInvoiceCustomers) {
+  const deleteCustomer = (id: string) => {
+    const cust = data.customers.find(c => c.id === id);
+    const custName = cust?.name ? `"${cust.name}"` : 'this customer';
+    showConfirm('Delete Customer', `Are you sure you want to delete ${custName}?`, async () => {
       try {
-        const cust: Customer = {
-          id: `cust_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-          name: u.name.trim(), city: u.city || '', phone: ''
-        };
-        await data.saveCustomer(cust, currentUser);
-      } catch (e) { console.error('Bulk save customer error:', e); }
-    }
+        await data.removeCustomer(id, currentUser);
+        if (editingCustomerId === id) cancelEditCustomer();
+        setSelectedCustomerIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+        showToast(`Customer ${custName} deleted.`);
+      } catch (e) {
+        console.error("Error deleting customer:", e);
+        showToast("Failed to delete customer.", "error");
+      }
+    });
+  };
+
+  const bulkDeleteCustomers = () => {
+    if (selectedCustomerIds.size === 0) return;
+    const count = selectedCustomerIds.size;
+    showConfirm('Delete Selected Customers', `Delete ${count} selected customer(s)? This cannot be undone.`, async () => {
+      for (const id of selectedCustomerIds) {
+        try { await data.removeCustomer(id, currentUser); } catch (e) { console.error('Bulk delete customer error:', e); }
+      }
+      setSelectedCustomerIds(new Set());
+      if (editingCustomerId && selectedCustomerIds.has(editingCustomerId)) cancelEditCustomer();
+      showToast(`${count} customers deleted.`);
+    });
+  };
+
+  const handleSaveAllUnsavedCustomers = () => {
+    const count = unsavedInvoiceCustomers.length;
+    if (count === 0) return;
+    showConfirm('Save All Customers', `Save all ${count} unsaved customers to your directory?`, async () => {
+      for (const u of unsavedInvoiceCustomers) {
+        try {
+          const cust: Customer = {
+            id: `cust_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            name: u.name.trim(), city: u.city || '', phone: ''
+          };
+          await data.saveCustomer(cust, currentUser);
+        } catch (e) { console.error('Bulk save customer error:', e); }
+      }
+      showToast(`All ${count} customers saved to directory!`);
+    }, 'primary', 'Save All');
   };
 
   const handleQuickSaveCustomer = async (name: string, city: string = '') => {
@@ -762,10 +846,10 @@ const OfflineAppShell: React.FC<{
         phone: ''
       };
       await data.saveCustomer(cust, currentUser);
-      alert(`Customer "${name.trim()}" saved to your customer directory!`);
+      showToast(`Customer "${name.trim()}" saved to your customer directory!`);
     } catch (e) {
       console.error("Error quick-saving customer:", e);
-      alert(`Failed to save customer "${name}".`);
+      showToast(`Failed to save customer "${name}".`, "error");
     }
   };
 
@@ -958,55 +1042,57 @@ const OfflineAppShell: React.FC<{
             settings={data.settings}
             onDeleteInvoice={async (id) => {
               if (currentUser.role !== 'admin' && !currentUser.permissions?.canDeleteBills) {
-                alert('Permission Denied: You do not have permission to delete invoices. Please contact your administrator.');
+                showToast('Permission Denied: You do not have permission to delete invoices.', 'error');
                 return;
               }
               const inv = data.invoices.find(i => i.id === id);
               const custInfo = inv?.customerName ? ` for "${inv.customerName}"` : '';
               const amtInfo = inv?.total !== undefined ? ` (Total: ₹${inv.total})` : '';
 
-              if (!window.confirm(`Are you sure you want to delete Bill #${id}${custInfo}${amtInfo}?\n\nThis bill will be moved to Trash. You can restore it anytime from Invoice History.`)) {
-                return;
-              }
-
-              if (inv) await data.saveInvoice({
-                ...inv,
-                isDeleted: true,
-                deletedAt: Date.now(),
-                deletedBy: currentUser.id,
-                deletedByName: currentUser.name,
-                deletedByEmail: currentUser.email,
+              showConfirm('Move Bill to Trash', `Are you sure you want to delete Bill #${id}${custInfo}${amtInfo}?\n\nThis bill will be moved to Trash. You can restore it anytime from Invoice History.`, async () => {
+                if (inv) await data.saveInvoice({
+                  ...inv,
+                  isDeleted: true,
+                  deletedAt: Date.now(),
+                  deletedBy: currentUser.id,
+                  deletedByName: currentUser.name,
+                  deletedByEmail: currentUser.email,
+                });
+                showToast(`Bill #${id} moved to Trash.`);
               });
             }}
             onRestoreInvoice={async (id) => {
               const inv = data.invoices.find(i => i.id === id);
-              if (inv) await data.saveInvoice({ ...inv, isDeleted: false, restoredAt: Date.now() });
+              if (inv) {
+                await data.saveInvoice({ ...inv, isDeleted: false, restoredAt: Date.now() });
+                showToast(`Bill #${id} restored successfully!`);
+              }
             }}
             onPermanentDeleteInvoice={async (id) => {
               if (currentUser.role !== 'admin') {
-                alert('Permission Denied: Only Administrator can permanently delete invoices.');
+                showToast('Permission Denied: Only Administrator can permanently delete invoices.', 'error');
                 return;
               }
-              if (!window.confirm(`Are you sure you want to permanently delete Bill #${id}?\n\nWARNING: This action CANNOT be undone.`)) {
-                return;
-              }
-              await deleteInvoice(id);
-              await data.refreshAll();
+              showConfirm('Permanently Delete Bill', `Are you sure you want to permanently delete Bill #${id}?\n\nWARNING: This action CANNOT be undone.`, async () => {
+                await deleteInvoice(id);
+                await data.refreshAll();
+                showToast(`Bill #${id} permanently deleted.`);
+              });
             }}
             onEmptyTrash={async () => {
               if (currentUser.role !== 'admin') {
-                alert('Permission Denied: Only Administrator can empty the trash.');
+                showToast('Permission Denied: Only Administrator can empty the trash.', 'error');
                 return;
               }
               const trashed = data.invoices.filter(i => i.isDeleted);
               if (trashed.length === 0) return;
-              if (!window.confirm(`Permanently delete all ${trashed.length} invoices in Trash?\n\nWARNING: This cannot be undone.`)) {
-                return;
-              }
-              for (const inv of trashed) {
-                await deleteInvoice(inv.id);
-              }
-              await data.refreshAll();
+              showConfirm('Empty Trash', `Permanently delete all ${trashed.length} invoices in Trash?\n\nWARNING: This cannot be undone.`, async () => {
+                for (const inv of trashed) {
+                  await deleteInvoice(inv.id);
+                }
+                await data.refreshAll();
+                showToast(`Trash emptied (${trashed.length} bills permanently deleted).`);
+              });
             }}
             isMainAdmin={currentUser.role === 'admin'}
             businessMembers={localUsers.map(u => ({ uid: u.id, email: u.email, displayName: u.name, role: u.role }))}
@@ -1654,6 +1740,54 @@ const OfflineAppShell: React.FC<{
           onClose={() => setShowBackupModal(false)}
           onRefreshList={async () => setBackupList(await listBackups())}
         />
+      )}
+
+      {/* ── Global In-App Toast ── */}
+      {toast && (
+        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[9999] px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2.5 text-sm font-bold border-2 animate-fadeIn pointer-events-none ${
+          toast.type === 'error'
+            ? 'bg-red-600 text-white border-red-400'
+            : toast.type === 'info'
+            ? 'bg-blue-600 text-white border-blue-400'
+            : 'bg-emerald-600 text-white border-emerald-400'
+        }`}>
+          {toast.type === 'error' ? (
+            <AlertTriangle className="w-4 h-4 text-white shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-white shrink-0" />
+          )}
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* ── Global In-App Confirm Modal ── */}
+      {confirmModal?.isOpen && (
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">{confirmModal.title}</h3>
+            <p className="text-sm text-slate-600 mb-6 whitespace-pre-line leading-relaxed">{confirmModal.message}</p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-sm transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 text-white font-semibold rounded-lg text-sm transition-colors cursor-pointer shadow-sm ${
+                  confirmModal.confirmStyle === 'primary'
+                    ? 'bg-indigo-600 hover:bg-indigo-700'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                {confirmModal.confirmText || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

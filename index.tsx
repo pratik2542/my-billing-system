@@ -13,6 +13,27 @@ const root = ReactDOM.createRoot(rootElement);
 // mount the offline SQLite-backed app. Otherwise mount the cloud Firebase app.
 const IS_ELECTRON = typeof window !== 'undefined' && !!(window as any).electronAPI;
 
+// ─── Global Electron Dialog Safety Interceptor ─────────────────────────────────
+// Chromium's window.alert and window.confirm steal OS focus on Windows in Electron
+// and drop pointer input events after being dismissed. We safely intercept them here.
+if (typeof window !== 'undefined') {
+  window.alert = (msg?: any) => {
+    console.warn('[Global window.alert redirected]:', msg);
+    window.dispatchEvent(new CustomEvent('app-global-toast', { detail: { message: String(msg ?? ''), type: 'info' } }));
+  };
+
+  if ((window as any).electronAPI?.confirmSync) {
+    window.confirm = (msg?: string) => {
+      try {
+        return Boolean((window as any).electronAPI.confirmSync(String(msg || '')));
+      } catch (e) {
+        console.warn('confirmSync error fallback:', e);
+        return true;
+      }
+    };
+  }
+}
+
 async function mountApp() {
   if (IS_ELECTRON) {
     // Offline desktop mode — lazy import to keep cloud bundle clean

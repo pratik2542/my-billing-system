@@ -665,7 +665,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       // Show instant floating toast: "Save is done"
       setSaveSuccessToast(editingInvoice ? `Bill #${invoice.id} updated successfully!` : `Bill #${invoice.id} saved successfully!`);
       setTimeout(() => setSaveSuccessToast(null), 4000);
-      
+
       if (editingInvoice) {
         setIsEditSaved(true);
         // Clear editing state
@@ -721,7 +721,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
       {/* LEFT: Controls */}
       <div ref={formScrollRef} className={`w-full lg:w-2/5 h-full bg-white p-4 lg:p-6 rounded-lg shadow-md border border-slate-200 overflow-y-auto no-print ${showPreviewMobile ? 'hidden lg:block' : 'block'}`}>
-        
+
         {/* Editing Banner */}
         {editingInvoice && (
           <div className="mb-4 p-3 bg-blue-50 border-2 border-blue-300 rounded-lg">
@@ -1129,8 +1129,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                       packingLabel.toLowerCase().includes('qty') || packingLabel.toLowerCase().includes('quantity')
                         ? 'e.g. 10, 20...'
                         : packingLabel.toLowerCase().includes('sq') || packingLabel.toLowerCase().includes('feet') || packingLabel.toLowerCase().includes('size')
-                        ? 'e.g. 10x12, 100...'
-                        : 'e.g. 1 kg, 500 gm...'
+                          ? 'e.g. 10x12, 100...'
+                          : 'e.g. 1 kg, 500 gm...'
                     }
                     value={customPacking}
                     onChange={(e) => {
@@ -1228,11 +1228,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-all ${
-                        customTaxRate !== ''
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
-                          : 'bg-slate-100 text-slate-600 border-slate-200'
-                      }`}>
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-all ${customTaxRate !== ''
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}>
                         {customTaxRate !== '' ? (
                           <>
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1281,11 +1280,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                               setIsSaved(false);
                             }}
                             disabled={isSaved}
-                            className={`py-1 text-xs font-bold rounded-md transition-all cursor-pointer text-center ${
-                              isSelected
-                                ? 'bg-emerald-600 text-white shadow-xs'
-                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
-                            }`}
+                            className={`py-1 text-xs font-bold rounded-md transition-all cursor-pointer text-center ${isSelected
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+                              }`}
                             title={`Set tax rate to ${rate}%`}
                           >
                             {rate}%
@@ -1460,11 +1458,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-all ${
-                              editTaxRate !== ''
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
-                                : 'bg-slate-100 text-slate-600 border-slate-200'
-                            }`}>
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap transition-all ${editTaxRate !== ''
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'
+                              }`}>
                               {editTaxRate !== '' ? (
                                 <>
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -1507,11 +1504,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                                       setEditTaxRate(String(rate));
                                     }
                                   }}
-                                  className={`py-1 text-xs font-bold rounded-md transition-all cursor-pointer text-center ${
-                                    isSelected
-                                      ? 'bg-emerald-600 text-white shadow-xs'
-                                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
-                                  }`}
+                                  className={`py-1 text-xs font-bold rounded-md transition-all cursor-pointer text-center ${isSelected
+                                    ? 'bg-emerald-600 text-white shadow-xs'
+                                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+                                    }`}
                                   title={`Set tax rate to ${rate}%`}
                                 >
                                   {rate}%
@@ -1551,11 +1547,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                         <div className="text-slate-500 text-xs font-medium mt-0.5 flex items-center gap-2 flex-wrap">
                           <span>{rateLabel}: ₹{formatBillNum(item.rate)} | {qtyLabel}: {formatBillQty(item.quantity)}{item.unit ? ` ${item.unit}` : ''}</span>
                           {settings.enableGst && (
-                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              item.taxRate !== undefined && item.taxRate !== gstRate
-                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-500 border border-slate-200'
-                            }`}>
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${item.taxRate !== undefined && item.taxRate !== gstRate
+                              ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                              : 'bg-slate-100 text-slate-500 border border-slate-200'
+                              }`}>
                               Tax: {item.taxRate !== undefined ? item.taxRate : gstRate}%
                               {item.taxRate !== undefined && item.taxRate !== gstRate && <span className="ml-1 text-emerald-600">★</span>}
                             </span>
@@ -1735,299 +1730,294 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           </div>
         )}
 
-          {/* Live Totals in Controls */}
-          {items.length > 0 && (
-            <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
-              {/* GST Tax Type Toggle (CGST + SGST vs IGST) */}
-              {settings.enableGst && (
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-700 bg-white p-2 rounded-lg border border-slate-200 mb-2.5 shadow-2xs">
-                  <span className="text-[11px] font-bold text-slate-600">Tax Type:</span>
-                  <div className="inline-flex rounded-md p-0.5 bg-slate-100 border border-slate-200 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => { setTaxType('cgst_sgst'); setIsSaved(false); }}
-                      className={`px-2 py-0.5 text-[11px] font-bold rounded cursor-pointer transition-all ${
-                        taxType === 'cgst_sgst' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+        {/* Live Totals in Controls */}
+        {items.length > 0 && (
+          <div className="mt-4 p-3 bg-slate-50 rounded border border-slate-200">
+            {/* GST Tax Type Toggle (CGST + SGST vs IGST) */}
+            {settings.enableGst && (
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 bg-white p-2 rounded-lg border border-slate-200 mb-2.5 shadow-2xs">
+                <span className="text-[11px] font-bold text-slate-600">Tax Type:</span>
+                <div className="inline-flex rounded-md p-0.5 bg-slate-100 border border-slate-200 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => { setTaxType('cgst_sgst'); setIsSaved(false); }}
+                    className={`px-2 py-0.5 text-[11px] font-bold rounded cursor-pointer transition-all ${taxType === 'cgst_sgst' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
-                      title="Intra-State: Split tax into CGST and SGST"
-                    >
-                      CGST + SGST
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setTaxType('igst'); setIsSaved(false); }}
-                      className={`px-2 py-0.5 text-[11px] font-bold rounded cursor-pointer transition-all ${
-                        taxType === 'igst' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    title="Intra-State: Split tax into CGST and SGST"
+                  >
+                    CGST + SGST
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setTaxType('igst'); setIsSaved(false); }}
+                    className={`px-2 py-0.5 text-[11px] font-bold rounded cursor-pointer transition-all ${taxType === 'igst' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
                       }`}
-                      title="Inter-State: Integrated GST for out-of-state sales"
-                    >
-                      IGST
-                    </button>
-                  </div>
+                    title="Inter-State: Integrated GST for out-of-state sales"
+                  >
+                    IGST
+                  </button>
                 </div>
-              )}
+              </div>
+            )}
 
-              {settings.enableGst && (
-                <>
-                  <div className="flex justify-between text-sm text-slate-600 mb-1">
-                    <span>Subtotal:</span>
-                    <span>₹{formatBillNum(subtotal)}</span>
-                  </div>
+            {settings.enableGst && (
+              <>
+                <div className="flex justify-between text-sm text-slate-600 mb-1">
+                  <span>Subtotal:</span>
+                  <span>₹{formatBillNum(subtotal)}</span>
+                </div>
 
-                  {taxType === 'igst' ? (
-                    // IGST per-slab breakdown
-                    nonZeroSlabs.length === 0 ? (
-                      <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
-                        <span>IGST (0%):</span>
+                {taxType === 'igst' ? (
+                  // IGST per-slab breakdown
+                  nonZeroSlabs.length === 0 ? (
+                    <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
+                      <span>IGST (0%):</span>
+                      <span>₹0</span>
+                    </div>
+                  ) : (
+                    nonZeroSlabs.map((slab, i) => (
+                      <div
+                        key={`igst-live-${slab.rate}`}
+                        className={`flex justify-between text-sm text-slate-600 mb-1 ${i === nonZeroSlabs.length - 1 ? 'border-b border-dashed border-slate-300 pb-1' : ''
+                          }`}
+                      >
+                        <span>IGST ({slab.rate}%):</span>
+                        <span>₹{formatBillNum(slab.taxAmount)}</span>
+                      </div>
+                    ))
+                  )
+                ) : (
+                  // CGST + SGST per-slab breakdown
+                  nonZeroSlabs.length === 0 ? (
+                    <>
+                      <div className="flex justify-between text-sm text-slate-600 mb-1">
+                        <span>CGST (0%):</span>
                         <span>₹0</span>
                       </div>
-                    ) : (
-                      nonZeroSlabs.map((slab, i) => (
-                        <div
-                          key={`igst-live-${slab.rate}`}
-                          className={`flex justify-between text-sm text-slate-600 mb-1 ${
-                            i === nonZeroSlabs.length - 1 ? 'border-b border-dashed border-slate-300 pb-1' : ''
-                          }`}
-                        >
-                          <span>IGST ({slab.rate}%):</span>
-                          <span>₹{formatBillNum(slab.taxAmount)}</span>
-                        </div>
-                      ))
-                    )
+                      <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
+                        <span>SGST (0%):</span>
+                        <span>₹0</span>
+                      </div>
+                    </>
                   ) : (
-                    // CGST + SGST per-slab breakdown
-                    nonZeroSlabs.length === 0 ? (
-                      <>
-                        <div className="flex justify-between text-sm text-slate-600 mb-1">
-                          <span>CGST (0%):</span>
-                          <span>₹0</span>
-                        </div>
-                        <div className="flex justify-between text-sm text-slate-600 mb-1 border-b border-dashed border-slate-300 pb-1">
-                          <span>SGST (0%):</span>
-                          <span>₹0</span>
-                        </div>
-                      </>
-                    ) : (
-                      nonZeroSlabs.map((slab, i) => {
-                        const sgst = Math.round(slab.taxAmount / 2 * 100) / 100;
-                        const cgst = Math.round((slab.taxAmount - sgst) * 100) / 100;
-                        const isLast = i === nonZeroSlabs.length - 1;
-                        return (
-                          <React.Fragment key={`cgst-sgst-live-${slab.rate}`}>
-                            <div className="flex justify-between text-sm text-slate-600 mb-1">
-                              <span>CGST ({slab.rate / 2}%):</span>
-                              <span>₹{formatBillNum(cgst)}</span>
-                            </div>
-                            <div className={`flex justify-between text-sm text-slate-600 mb-1 ${isLast ? 'border-b border-dashed border-slate-300 pb-1' : ''}`}>
-                              <span>SGST ({slab.rate / 2}%):</span>
-                              <span>₹{formatBillNum(sgst)}</span>
-                            </div>
-                          </React.Fragment>
-                        );
-                      })
-                    )
-                  )}
-                </>
-              )}
-              <div className="flex justify-between font-bold text-lg text-slate-900 mt-1">
-                <span>Total:</span>
-                <span>₹{formatBillNum(grandTotal)}</span>
-              </div>
+                    nonZeroSlabs.map((slab, i) => {
+                      const sgst = Math.round(slab.taxAmount / 2 * 100) / 100;
+                      const cgst = Math.round((slab.taxAmount - sgst) * 100) / 100;
+                      const isLast = i === nonZeroSlabs.length - 1;
+                      return (
+                        <React.Fragment key={`cgst-sgst-live-${slab.rate}`}>
+                          <div className="flex justify-between text-sm text-slate-600 mb-1">
+                            <span>CGST ({slab.rate / 2}%):</span>
+                            <span>₹{formatBillNum(cgst)}</span>
+                          </div>
+                          <div className={`flex justify-between text-sm text-slate-600 mb-1 ${isLast ? 'border-b border-dashed border-slate-300 pb-1' : ''}`}>
+                            <span>SGST ({slab.rate / 2}%):</span>
+                            <span>₹{formatBillNum(sgst)}</span>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })
+                  )
+                )}
+              </>
+            )}
+            <div className="flex justify-between font-bold text-lg text-slate-900 mt-1">
+              <span>Total:</span>
+              <span>₹{formatBillNum(grandTotal)}</span>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Payment / Billing Option at Invoice Creation */}
-          {enablePaymentTracking && items.length > 0 && (
-            <div className="mt-4 p-3.5 bg-gradient-to-br from-slate-50 to-indigo-50/40 rounded-xl border border-indigo-100 shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={recordPayment}
-                    onChange={(e) => {
-                      setRecordPayment(e.target.checked);
+        {/* Payment / Billing Option at Invoice Creation */}
+        {enablePaymentTracking && items.length > 0 && (
+          <div className="mt-4 p-3.5 bg-gradient-to-br from-slate-50 to-indigo-50/40 rounded-xl border border-indigo-100 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={recordPayment}
+                  onChange={(e) => {
+                    setRecordPayment(e.target.checked);
+                    setIsSaved(false);
+                    if (e.target.checked && !paymentAmount) {
+                      setPaymentAmount(formatBillNum(grandTotal));
+                    }
+                  }}
+                  disabled={isSaved}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span className="font-bold text-xs uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-indigo-600" />
+                  Collect Payment Now
+                </span>
+              </label>
+              {recordPayment && (
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                  {paymentType === 'full' && parseFloat(paymentAmount) >= grandTotal ? 'Marked Paid' : 'Partial'}
+                </span>
+              )}
+            </div>
+
+            {recordPayment && (
+              <div className="space-y-3 pt-2.5 border-t border-indigo-100/70">
+                {/* Payment Type Selection */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentType('full');
+                      setPaymentAmount(formatBillNum(grandTotal));
                       setIsSaved(false);
-                      if (e.target.checked && !paymentAmount) {
-                        setPaymentAmount(formatBillNum(grandTotal));
-                      }
                     }}
                     disabled={isSaved}
-                    className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                  />
-                  <span className="font-bold text-xs uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                    <CreditCard className="w-4 h-4 text-indigo-600" />
-                    Collect Payment Now
-                  </span>
-                </label>
-                {recordPayment && (
-                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                    {paymentType === 'full' && parseFloat(paymentAmount) >= grandTotal ? 'Marked Paid' : 'Partial'}
-                  </span>
-                )}
-              </div>
+                    className={`py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${paymentType === 'full'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                  >
+                    Full Payment (₹{formatBillNum(grandTotal)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentType('partial');
+                      setIsSaved(false);
+                    }}
+                    disabled={isSaved}
+                    className={`py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${paymentType === 'partial'
+                      ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                  >
+                    Partial Payment
+                  </button>
+                </div>
 
-              {recordPayment && (
-                <div className="space-y-3 pt-2.5 border-t border-indigo-100/70">
-                  {/* Payment Type Selection */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPaymentType('full');
-                        setPaymentAmount(formatBillNum(grandTotal));
+                {/* Mode & Amount Inputs */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Mode</label>
+                    <select
+                      value={paymentMode}
+                      onChange={(e) => {
+                        setPaymentMode(e.target.value as PaymentMode);
                         setIsSaved(false);
                       }}
                       disabled={isSaved}
-                      className={`py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
-                        paymentType === 'full'
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
+                      className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
                     >
-                      Full Payment (₹{formatBillNum(grandTotal)})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPaymentType('partial');
-                        setIsSaved(false);
-                      }}
-                      disabled={isSaved}
-                      className={`py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
-                        paymentType === 'partial'
-                          ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      Partial Payment
-                    </button>
+                      <option value="Cash">💵 Cash</option>
+                      <option value="UPI">📱 UPI / QR</option>
+                      <option value="Bank Transfer">🏦 Bank Transfer</option>
+                      <option value="Cheque">📜 Cheque</option>
+                      <option value="Other">🔹 Other</option>
+                    </select>
                   </div>
 
-                  {/* Mode & Amount Inputs */}
-                  <div className="grid grid-cols-2 gap-2">
+                  {paymentType === 'partial' ? (
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Mode</label>
-                      <select
-                        value={paymentMode}
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Paid Amount (₹)</label>
+                      <input
+                        type="number"
+                        value={paymentAmount}
                         onChange={(e) => {
-                          setPaymentMode(e.target.value as PaymentMode);
+                          setPaymentAmount(e.target.value);
                           setIsSaved(false);
                         }}
                         disabled={isSaved}
-                        className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                      >
-                        <option value="Cash">💵 Cash</option>
-                        <option value="UPI">📱 UPI / QR</option>
-                        <option value="Bank Transfer">🏦 Bank Transfer</option>
-                        <option value="Cheque">📜 Cheque</option>
-                        <option value="Other">🔹 Other</option>
-                      </select>
+                        min="0"
+                        max={grandTotal}
+                        step="0.01"
+                        placeholder="Amount paid"
+                        className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none font-bold"
+                      />
                     </div>
-
-                    {paymentType === 'partial' ? (
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Paid Amount (₹)</label>
-                        <input
-                          type="number"
-                          value={paymentAmount}
-                          onChange={(e) => {
-                            setPaymentAmount(e.target.value);
-                            setIsSaved(false);
-                          }}
-                          disabled={isSaved}
-                          min="0"
-                          max={grandTotal}
-                          step="0.01"
-                          placeholder="Amount paid"
-                          className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none font-bold"
-                        />
-                      </div>
-                    ) : (
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Date</label>
-                        <input
-                          type="text"
-                          value={paymentDate}
-                          onChange={(e) => {
-                            setPaymentDate(e.target.value);
-                            setIsSaved(false);
-                          }}
-                          disabled={isSaved}
-                          placeholder="DD/MM/YYYY"
-                          className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none font-medium"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {paymentType === 'partial' && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Date</label>
-                        <input
-                          type="text"
-                          value={paymentDate}
-                          onChange={(e) => {
-                            setPaymentDate(e.target.value);
-                            setIsSaved(false);
-                          }}
-                          disabled={isSaved}
-                          placeholder="DD/MM/YYYY"
-                          className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none font-medium"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Remaining Due</label>
-                        <div className="p-2 bg-red-50 border border-red-100 rounded text-xs font-bold text-red-700">
-                          ₹{formatBillNum(Math.max(0, grandTotal - (parseFloat(paymentAmount) || 0)))}
-                        </div>
-                      </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Date</label>
+                      <input
+                        type="text"
+                        value={paymentDate}
+                        onChange={(e) => {
+                          setPaymentDate(e.target.value);
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        placeholder="DD/MM/YYYY"
+                        className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none font-medium"
+                      />
                     </div>
                   )}
-
-                  {/* Payment Note */}
-                  <div>
-                    <input
-                      type="text"
-                      value={paymentNote}
-                      onChange={(e) => {
-                        setPaymentNote(e.target.value);
-                        setIsSaved(false);
-                      }}
-                      disabled={isSaved}
-                      placeholder="Payment Note (optional, e.g. GPay Txn ID, Chq #)"
-                      className="w-full p-2 border border-slate-200 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none text-slate-600"
-                    />
-                  </div>
-
-                  {/* Payment Summary Pill */}
-                  {(() => {
-                    const pAmt = parseFloat(paymentAmount) || 0;
-                    const dueAmt = Math.max(0, grandTotal - pAmt);
-                    return (
-                      <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-200">
-                        <div className="flex items-center gap-1.5">
-                          <Banknote size={14} className="text-emerald-600" />
-                          <span className="text-slate-600">Paying Now:</span>
-                          <span className="font-bold text-emerald-700">₹{formatBillNum(pAmt)}</span>
-                        </div>
-                        {dueAmt > 0 ? (
-                          <div className="text-amber-700 font-bold text-[11px]">
-                            Due Later: ₹{formatBillNum(dueAmt)}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1 text-emerald-700 font-bold text-[11px]">
-                            <CheckCircle2 size={12} />
-                            <span>Fully Cleared</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
                 </div>
-              )}
-            </div>
-          )}
+
+                {paymentType === 'partial' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Date</label>
+                      <input
+                        type="text"
+                        value={paymentDate}
+                        onChange={(e) => {
+                          setPaymentDate(e.target.value);
+                          setIsSaved(false);
+                        }}
+                        disabled={isSaved}
+                        placeholder="DD/MM/YYYY"
+                        className="w-full p-2 border border-slate-300 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Remaining Due</label>
+                      <div className="p-2 bg-red-50 border border-red-100 rounded text-xs font-bold text-red-700">
+                        ₹{formatBillNum(Math.max(0, grandTotal - (parseFloat(paymentAmount) || 0)))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Payment Note */}
+                <div>
+                  <input
+                    type="text"
+                    value={paymentNote}
+                    onChange={(e) => {
+                      setPaymentNote(e.target.value);
+                      setIsSaved(false);
+                    }}
+                    disabled={isSaved}
+                    placeholder="Payment Note (optional, e.g. GPay Txn ID, Chq #)"
+                    className="w-full p-2 border border-slate-200 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-500 outline-none text-slate-600"
+                  />
+                </div>
+
+                {/* Payment Summary Pill */}
+                {(() => {
+                  const pAmt = parseFloat(paymentAmount) || 0;
+                  const dueAmt = Math.max(0, grandTotal - pAmt);
+                  return (
+                    <div className="flex items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <Banknote size={14} className="text-emerald-600" />
+                        <span className="text-slate-600">Paying Now:</span>
+                        <span className="font-bold text-emerald-700">₹{formatBillNum(pAmt)}</span>
+                      </div>
+                      {dueAmt > 0 ? (
+                        <div className="text-amber-700 font-bold text-[11px]">
+                          Due Later: ₹{formatBillNum(dueAmt)}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 text-emerald-700 font-bold text-[11px]">
+                          <CheckCircle2 size={12} />
+                          <span>Fully Cleared</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="grid grid-cols-2 gap-3 mt-auto pb-4 lg:pb-0">
@@ -2046,12 +2036,12 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           </button>
 
           <button
-              onClick={handlePrint}
-              disabled={!isSaved || isSaving}
-              className="flex items-center justify-center gap-2 bg-red-600 text-white p-3 rounded hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
-            >
-              <Printer className="w-4 h-4" /> Print
-            </button>
+            onClick={handlePrint}
+            disabled={!isSaved || isSaving}
+            className="flex items-center justify-center gap-2 bg-red-600 text-white p-3 rounded hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
+          >
+            <Printer className="w-4 h-4" /> Print
+          </button>
 
           {isSaved && (
             <button
