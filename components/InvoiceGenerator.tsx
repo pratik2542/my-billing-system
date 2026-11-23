@@ -405,8 +405,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const [itemNameError, setItemNameError] = useState<string>('');
   const [saveError, setSaveError] = useState<string>('');
   const [isEditSaved, setIsEditSaved] = useState(false);
+  const [saveSuccessToast, setSaveSuccessToast] = useState<string | null>(null);
   const [showCancelEditConfirm, setShowCancelEditConfirm] = useState(false);
   const [showNewBillConfirm, setShowNewBillConfirm] = useState(false);
+  const formScrollRef = useRef<HTMLDivElement>(null);
 
   // Inline Item Edit States
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -656,6 +658,13 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       // This prevents the useEffect from updating billNo when settings.nextInvoiceNumber changes
       setIsSaved(true);
       await onSaveInvoice(invoice);
+
+      // Auto-scroll the form smoothly to top so user clearly sees the success banner
+      formScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+
+      // Show instant floating toast: "Save is done"
+      setSaveSuccessToast(editingInvoice ? `Bill #${invoice.id} updated successfully!` : `Bill #${invoice.id} saved successfully!`);
+      setTimeout(() => setSaveSuccessToast(null), 4000);
       
       if (editingInvoice) {
         setIsEditSaved(true);
@@ -686,6 +695,14 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   return (
     <div className="flex flex-col lg:flex-row h-full gap-4 lg:gap-4 relative overflow-hidden">
 
+      {/* Floating Save Done Toast Notification */}
+      {saveSuccessToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2.5 text-sm font-bold border-2 border-emerald-400 animate-fadeIn pointer-events-none">
+          <CheckCircle2 className="w-4 h-4 text-white shrink-0" />
+          <span>{saveSuccessToast}</span>
+        </div>
+      )}
+
       {/* Mobile Toggle Tabs */}
       <div className="lg:hidden flex mb-2 bg-slate-200 p-1 rounded-lg">
         <button
@@ -703,7 +720,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       </div>
 
       {/* LEFT: Controls */}
-      <div className={`w-full lg:w-2/5 h-full bg-white p-4 lg:p-6 rounded-lg shadow-md border border-slate-200 overflow-y-auto no-print ${showPreviewMobile ? 'hidden lg:block' : 'block'}`}>
+      <div ref={formScrollRef} className={`w-full lg:w-2/5 h-full bg-white p-4 lg:p-6 rounded-lg shadow-md border border-slate-200 overflow-y-auto no-print ${showPreviewMobile ? 'hidden lg:block' : 'block'}`}>
         
         {/* Editing Banner */}
         {editingInvoice && (
@@ -731,19 +748,21 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
         {/* Saved Bill Success Banner */}
         {isSaved && !editingInvoice && (
-          <div className="mb-4 p-4 bg-emerald-50 border-2 border-emerald-400 rounded-xl shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fadeIn">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              <div>
+          <div className="mb-4 p-3.5 bg-emerald-50 border-2 border-emerald-500 rounded-xl shadow-xs flex flex-col gap-3 animate-fadeIn">
+            <div className="flex items-start gap-2.5">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
                 <p className="font-bold text-emerald-900 text-sm">Bill #{billNo} Saved to History!</p>
-                <p className="text-xs text-emerald-700">Form is locked to protect this saved bill. Print now or start next bill.</p>
+                <p className="text-xs text-emerald-700 leading-snug">
+                  Form is locked to protect this saved bill. Print now or start next bill.
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="grid grid-cols-2 gap-2 w-full pt-2 border-t border-emerald-200/80">
               <button
                 type="button"
                 onClick={handlePrint}
-                className="flex-1 sm:flex-none px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                className="w-full py-2 px-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
               >
                 <Printer size={15} />
                 <span>Print Bill</span>
@@ -751,10 +770,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
               <button
                 type="button"
                 onClick={resetForm}
-                className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                className="w-full py-2 px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer truncate"
               >
                 <FilePlus size={15} />
-                <span>+ Create Next Bill</span>
+                <span className="truncate">+ Create Next Bill</span>
               </button>
             </div>
           </div>
@@ -2016,10 +2035,14 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             onClick={handleSave}
             disabled={items.length === 0 || isSaved || !customerName.trim() || isSaving}
             title={!customerName.trim() && items.length > 0 ? "Please add customer name" : ""}
-            className="flex items-center justify-center gap-2 bg-indigo-600 text-white p-3 rounded hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold"
+            className={`flex items-center justify-center gap-2 p-3 rounded transition-colors shadow-sm text-sm font-bold ${
+              isSaved
+                ? 'bg-emerald-600 text-white cursor-default'
+                : 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed'
+            }`}
           >
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isSaving ? "Saving..." : (editingInvoice ? "Update Invoice" : "Save")}
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : (isSaved ? <CheckCircle2 className="w-4 h-4 text-white" /> : <Save className="w-4 h-4" />)}
+            {isSaving ? "Saving..." : (isSaved ? "Saved Successfully!" : (editingInvoice ? "Update Invoice" : "Save"))}
           </button>
 
           <button
