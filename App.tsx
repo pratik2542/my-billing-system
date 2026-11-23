@@ -133,6 +133,7 @@ const App: React.FC = () => {
 
   // --- Data State ---
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.CREATE_BILL);
+  const [createBillKey, setCreateBillKey] = useState(0);
   const [dataLoading, setDataLoading] = useState(false);
 
   // Real-time Data from Firestore
@@ -698,6 +699,10 @@ const App: React.FC = () => {
       }
       setTempSettings(settings);
       setHasUnsavedSettingsWithRef(false);
+    }
+    if (tab === AppTab.CREATE_BILL) {
+      setEditingInvoice(null);
+      setCreateBillKey(k => k + 1);
     }
     setActiveTab(tab);
   };
@@ -1936,6 +1941,7 @@ const compressImageToMaxDataUrl = (
           <div className="flex-1 min-h-0">
             <ErrorBoundary fallbackTitle="Error loading Bill Creator">
               <InvoiceGenerator
+                key={editingInvoice ? `edit_${editingInvoice.id}` : `new_${createBillKey}`}
                 products={products}
                 customers={customers}
                 invoices={invoices}

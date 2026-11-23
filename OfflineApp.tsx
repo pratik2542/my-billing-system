@@ -373,6 +373,15 @@ const OfflineAppShell: React.FC<{
   const data = useContext(OfflineDataCtx);
   const features = useOfflineFeatures();
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.CREATE_BILL);
+  const [createBillKey, setCreateBillKey] = useState(0);
+
+  const handleTabChange = useCallback((tab: AppTab) => {
+    if (tab === AppTab.CREATE_BILL) {
+      setEditingInvoice(null);
+      setCreateBillKey(k => k + 1);
+    }
+    setActiveTab(tab);
+  }, []);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [backupList, setBackupList] = useState<any[]>([]);
   const [backupMsg, setBackupMsg] = useState('');
@@ -805,6 +814,7 @@ const OfflineAppShell: React.FC<{
       case AppTab.CREATE_BILL:
         return (
           <InvoiceGenerator
+            key={editingInvoice ? `edit_${editingInvoice.id}` : `new_${createBillKey}`}
             products={data.products}
             customers={data.customers}
             invoices={data.invoices}
@@ -1587,7 +1597,7 @@ const OfflineAppShell: React.FC<{
       {/* Sidebar */}
       <OfflineSidebar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         features={features}
         currentUser={currentUser}
         onLogout={onLogout}

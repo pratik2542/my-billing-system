@@ -650,7 +650,12 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         // Reset form
         resetForm();
       } else {
-        alert("Invoice saved to history successfully! You can now download or share it.");
+        const createNext = window.confirm(
+          `Invoice #${invoice.id} saved to history successfully!\n\n• Click OK to start your next bill.\n• Click Cancel to review or print this bill.`
+        );
+        if (createNext) {
+          resetForm();
+        }
       }
     } catch (e) {
       setIsSaved(false);
@@ -715,6 +720,37 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           </div>
         )}
 
+        {/* Saved Bill Success Banner */}
+        {isSaved && !editingInvoice && (
+          <div className="mb-4 p-4 bg-emerald-50 border-2 border-emerald-400 rounded-xl shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fadeIn">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <div>
+                <p className="font-bold text-emerald-900 text-sm">Bill #{billNo} Saved to History!</p>
+                <p className="text-xs text-emerald-700">Form is locked to protect this saved bill. Print now or start next bill.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="flex-1 sm:flex-none px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              >
+                <Printer size={15} />
+                <span>Print Bill</span>
+              </button>
+              <button
+                type="button"
+                onClick={resetForm}
+                className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+              >
+                <FilePlus size={15} />
+                <span>+ Create Next Bill</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Printer className="w-5 h-5 text-red-600" />
@@ -722,19 +758,20 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           </h2>
           <button
             onClick={() => {
-              if (items.length > 0) {
-                if (window.confirm("Start a new bill? Current items will be cleared.")) {
+              if (items.length > 0 && !isSaved) {
+                if (window.confirm("Start a new bill? Current unsaved items will be cleared.")) {
                   if (onClearEditingInvoice) onClearEditingInvoice();
                   resetForm();
                 }
               } else {
+                if (onClearEditingInvoice) onClearEditingInvoice();
                 resetForm();
               }
             }}
-            className="text-xs font-bold text-red-600 hover:text-red-700 flex items-center gap-1 px-2 py-1 bg-red-50 rounded transition-colors"
+            className="text-xs font-bold text-indigo-700 hover:text-indigo-800 flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors shadow-xs cursor-pointer"
           >
-            <FilePlus className="w-3.5 h-3.5" />
-            New Bill
+            <FilePlus className="w-3.5 h-3.5 text-indigo-600" />
+            + New Bill
           </button>
         </div>
 
@@ -1939,9 +1976,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           {isSaved && (
             <button
               onClick={resetForm}
-              className="col-span-2 flex items-center justify-center gap-2 bg-red-50 text-red-600 p-3 rounded border border-red-100 hover:bg-red-100 transition-colors font-bold mt-2"
+              className="col-span-2 flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 p-3 rounded-lg border border-indigo-200 hover:bg-indigo-100 transition-colors font-bold mt-2 shadow-xs cursor-pointer text-sm"
             >
-              <FilePlus className="w-4 h-4" /> New Bill
+              <FilePlus className="w-4 h-4 text-indigo-600" />
+              <span>+ Create Next Bill (Bill #{Number(billNo) + 1 || ''})</span>
             </button>
           )}
         </div>
