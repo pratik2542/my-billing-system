@@ -401,6 +401,13 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     return undefined;
   }, [recordPayment, paymentAmount, paymentMode, paymentDate, date, paymentNote, editingInvoice]);
 
+  // ── Inline validation / confirmation state (replaces all native alert/confirm) ──
+  const [itemNameError, setItemNameError] = useState<string>('');
+  const [saveError, setSaveError] = useState<string>('');
+  const [isEditSaved, setIsEditSaved] = useState(false);
+  const [showCancelEditConfirm, setShowCancelEditConfirm] = useState(false);
+  const [showNewBillConfirm, setShowNewBillConfirm] = useState(false);
+
   // Inline Item Edit States
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -424,9 +431,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
   const saveEditItem = (id: string) => {
     if (!editName.trim()) {
-      alert(`${particularsLabel} cannot be empty.`);
+      setItemNameError(`${particularsLabel} cannot be empty.`);
       return;
     }
+    setItemNameError('');
     const finalRate = editRate && parseFloat(editRate) >= 0 ? parseFloat(editRate) : 0;
     const finalQty = editQty > 0 ? editQty : 1;
     const finalUnit = editUnit || settings.customUnits?.[0] || 'Kg';
@@ -463,9 +471,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
   const addItem = () => {
     const nameToUse = customProductName.trim();
     if (!nameToUse) {
-      alert(`Please enter a ${particularsLabel.toLowerCase()} for the item.`);
+      setItemNameError(`Please enter a ${particularsLabel.toLowerCase()} for the item.`);
       return;
     }
+    setItemNameError('');
 
     const finalRate = customRate && parseFloat(customRate) >= 0 ? parseFloat(customRate) : 0;
     const finalQty = qty > 0 ? qty : 1;
@@ -553,6 +562,12 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
     setBilledBy(currentUserDisplayName || '');
     setCustomTaxRate('');
     setTaxType(settings.defaultTaxType || 'cgst_sgst');
+    // Clear all inline error/confirm state
+    setItemNameError('');
+    setSaveError('');
+    setIsEditSaved(false);
+    setShowCancelEditConfirm(false);
+    setShowNewBillConfirm(false);
   };
 
   const handleCustomerSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -576,9 +591,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
 
   const handleSave = async () => {
     if (items.length === 0) {
-      alert("Please add items to the bill before saving.");
+      setSaveError("Please add items to the bill before saving.");
       return;
     }
+    setSaveError('');
 
     let initialPayments: PaymentEntry[] | undefined = undefined;
 
@@ -642,7 +658,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
       await onSaveInvoice(invoice);
       
       if (editingInvoice) {
-        alert("Invoice updated successfully!");
+        setIsEditSaved(true);
         // Clear editing state
         if (onClearEditingInvoice) {
           onClearEditingInvoice();
@@ -650,12 +666,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
         // Reset form
         resetForm();
       } else {
-        const createNext = window.confirm(
-          `Invoice #${invoice.id} saved to history successfully!\n\n• Click OK to start your next bill.\n• Click Cancel to review or print this bill.`
-        );
-        if (createNext) {
-          resetForm();
-        }
+        // isSaved=true already set above; the green success banner will appear
+        // with "Print Bill" and "Create Next Bill" buttons — no dialog needed
       }
     } catch (e) {
       setIsSaved(false);
@@ -706,10 +718,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
               </div>
               <button
                 onClick={() => {
-                  if (window.confirm("Cancel editing? Any changes will be lost.")) {
-                    if (onClearEditingInvoice) onClearEditingInvoice();
-                    resetForm();
-                  }
+                  setShowCancelEditConfirm(true);
                 }}
                 className="text-blue-600 hover:text-blue-800 p-1"
                 title="Cancel editing"
@@ -759,10 +768,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
           <button
             onClick={() => {
               if (items.length > 0 && !isSaved) {
-                if (window.confirm("Start a new bill? Current unsaved items will be cleared.")) {
-                  if (onClearEditingInvoice) onClearEditingInvoice();
-                  resetForm();
-                }
+                setShowNewBillConfirm(true);
               } else {
                 if (onClearEditingInvoice) onClearEditingInvoice();
                 resetForm();
@@ -797,6 +803,52 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
             >
               Cancel Edit
             </button>
+          </div>
+        )}
+
+        {/* Inline: Cancel Edit Confirm */}
+        {showCancelEditConfirm && (
+          <div className="mb-4 p-4 bg-red-50 border-2 border-red-300 rounded-xl flex flex-col gap-3">
+            <p className="text-sm font-bold text-red-800">Cancel editing? Any changes will be lost.</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowCancelEditConfirm(false); if (onClearEditingInvoice) onClearEditingInvoice(); resetForm(); }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+              >Yes, Cancel Edit</button>
+              <button
+                type="button"
+                onClick={() => setShowCancelEditConfirm(false)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg cursor-pointer"
+              >Keep Editing</button>
+            </div>
+          </div>
+        )}
+
+        {/* Inline: New Bill Confirm */}
+        {showNewBillConfirm && (
+          <div className="mb-4 p-4 bg-orange-50 border-2 border-orange-300 rounded-xl flex flex-col gap-3">
+            <p className="text-sm font-bold text-orange-800">Start a new bill? Current unsaved items will be cleared.</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowNewBillConfirm(false); if (onClearEditingInvoice) onClearEditingInvoice(); resetForm(); }}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+              >Yes, New Bill</button>
+              <button
+                type="button"
+                onClick={() => setShowNewBillConfirm(false)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg cursor-pointer"
+              >Keep Current</button>
+            </div>
+          </div>
+        )}
+
+        {/* Inline: Save Error */}
+        {saveError && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-red-700">{saveError}</p>
+            <button type="button" onClick={() => setSaveError('')} className="text-red-500 hover:text-red-700 shrink-0 cursor-pointer"><X size={16} /></button>
           </div>
         )}
 
@@ -1036,10 +1088,14 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                   onChange={(e) => {
                     setCustomProductName(e.target.value);
                     setIsSaved(false);
+                    if (itemNameError) setItemNameError('');
                   }}
                   disabled={isSaved}
                   className="w-full p-2.5 border border-slate-300 rounded-lg outline-none focus:border-red-500 text-sm bg-white font-semibold resize-y min-h-[48px] leading-snug"
                 />
+                {itemNameError && (
+                  <p className="mt-1 text-xs font-semibold text-red-600">{itemNameError}</p>
+                )}
               </div>
 
               {/* Secondary Column (Packing / Custom) + Rate, Unit, Qty & Add Button */}
@@ -1286,9 +1342,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({
                       <textarea
                         rows={2}
                         value={editName}
-                        onChange={e => setEditName(e.target.value)}
+                        onChange={e => { setEditName(e.target.value); if (itemNameError) setItemNameError(''); }}
                         className="w-full p-2 border border-slate-300 rounded text-xs bg-white font-semibold resize-y"
                       />
+                      {itemNameError && <p className="mt-0.5 text-[10px] font-semibold text-red-600">{itemNameError}</p>}
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
