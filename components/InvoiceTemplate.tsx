@@ -1,6 +1,40 @@
 import React from 'react';
+import QRCode from 'qrcode';
 import { BusinessSettings, ColumnId, InvoiceItem, PaymentEntry, TaxType } from '../types';
 import { getBillFontFamily, getEffectiveColumnOrder } from '../constants';
+
+const UpiQrImage: React.FC<{ upiString: string; className?: string }> = ({ upiString, className }) => {
+  const [qrDataUrl, setQrDataUrl] = React.useState<string>('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!upiString) {
+      setQrDataUrl('');
+      return;
+    }
+    QRCode.toDataURL(upiString, {
+      width: 250,
+      margin: 1,
+      errorCorrectionLevel: 'H',
+      color: { dark: '#000000', light: '#ffffff' }
+    })
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch((err) => {
+        console.error('Failed to generate offline QR code:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [upiString]);
+
+  if (!qrDataUrl) {
+    return <div className={className || 'w-24 h-24 bg-slate-100'} />;
+  }
+
+  return <img src={qrDataUrl} alt="UPI QR Code" className={className || 'w-24 h-24 block'} />;
+};
 
 interface InvoiceTemplateProps {
   id: string; // The HTML ID for printing context
@@ -609,9 +643,8 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
                   {settings.showUpiQr && settings.upiId && (
                     <div className="p-2 flex flex-col items-center justify-center border-l shrink-0" style={{ borderColor: lightBorder }}>
                       <div className="bg-white p-1 border relative" style={{ borderColor: borderColor }}>
-                        <img
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`upi://pay?pa=${settings.upiId}&pn=${settings.name}&am=${(Math.round(totalAmount * 100) / 100).toFixed(2)}&cu=INR`)}&ecc=H`}
-                          alt="UPI QR Code"
+                        <UpiQrImage
+                          upiString={`upi://pay?pa=${encodeURIComponent(settings.upiId.trim())}&pn=${encodeURIComponent(settings.name || '')}&am=${(Math.round(totalAmount * 100) / 100).toFixed(2)}&cu=INR`}
                           className="w-24 h-24 block"
                         />
                         {/* UPI Logo Overlay */}
